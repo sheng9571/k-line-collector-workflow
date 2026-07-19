@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
       batch:
-        description: 'Batch to run: 1-6, or "all" (ignored when symbols is set)'
+        description: 'Batch to run: 1-10, or "all" (ignored when symbols is set)'
         required: false
         default: 'all'
 
@@ -76,7 +76,7 @@ jobs:
             -v /tmp/collector-output:/tmp \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto backfill \
-            --symbols "BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,SOLUSDT" \
+            --symbols "BTCUSDT,ETHUSDT,BNBUSDT" \
             --deadline-minutes 315
 
       - name: Check remaining symbols
@@ -111,7 +111,7 @@ jobs:
             -v /tmp/collector-output:/tmp \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto backfill \
-            --symbols "TRXUSDT,DOGEUSDT,ZECUSDT,XLMUSDT,XMRUSDT" \
+            --symbols "XRPUSDT,SOLUSDT,TRXUSDT" \
             --deadline-minutes 315
 
       - name: Check remaining symbols
@@ -146,7 +146,7 @@ jobs:
             -v /tmp/collector-output:/tmp \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto backfill \
-            --symbols "LINKUSDT,ADAUSDT,BCHUSDT,GRAMUSDT,LTCUSDT" \
+            --symbols "DOGEUSDT,ZECUSDT,XLMUSDT" \
             --deadline-minutes 315
 
       - name: Check remaining symbols
@@ -181,7 +181,7 @@ jobs:
             -v /tmp/collector-output:/tmp \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto backfill \
-            --symbols "SUIUSDT,HBARUSDT,AVAXUSDT,NEARUSDT,UNIUSDT" \
+            --symbols "XMRUSDT,LINKUSDT,ADAUSDT" \
             --deadline-minutes 315
 
       - name: Check remaining symbols
@@ -216,7 +216,7 @@ jobs:
             -v /tmp/collector-output:/tmp \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto backfill \
-            --symbols "DOTUSDT,AAVEUSDT,POLUSDT,ATOMUSDT,ALGOUSDT" \
+            --symbols "BCHUSDT,GRAMUSDT,LTCUSDT" \
             --deadline-minutes 315
 
       - name: Check remaining symbols
@@ -251,7 +251,7 @@ jobs:
             -v /tmp/collector-output:/tmp \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto backfill \
-            --symbols "FILUSDT,INJUSDT,APTUSDT,SEIUSDT" \
+            --symbols "SUIUSDT,HBARUSDT,AVAXUSDT" \
             --deadline-minutes 315
 
       - name: Check remaining symbols
@@ -261,5 +261,145 @@ jobs:
             REMAINING=$(cat /tmp/collector-output/remaining_symbols.txt)
             if [ -n "$REMAINING" ]; then
               echo "::warning::Remaining symbols for batch-6: $REMAINING"
+            fi
+          fi
+
+  batch-7:
+    if: inputs.symbols == '' && (inputs.batch == 'all' || inputs.batch == '7')
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Run backfill
+        run: |
+          mkdir -p /tmp/collector-output
+
+          docker run --rm \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e REMAINING_FILE=/tmp/remaining_symbols.txt \
+            -v /tmp/collector-output:/tmp \
+            ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
+            crypto backfill \
+            --symbols "NEARUSDT,UNIUSDT,DOTUSDT" \
+            --deadline-minutes 315
+
+      - name: Check remaining symbols
+        if: always()
+        run: |
+          if [ -f /tmp/collector-output/remaining_symbols.txt ]; then
+            REMAINING=$(cat /tmp/collector-output/remaining_symbols.txt)
+            if [ -n "$REMAINING" ]; then
+              echo "::warning::Remaining symbols for batch-7: $REMAINING"
+            fi
+          fi
+
+  batch-8:
+    if: inputs.symbols == '' && (inputs.batch == 'all' || inputs.batch == '8')
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Run backfill
+        run: |
+          mkdir -p /tmp/collector-output
+
+          docker run --rm \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e REMAINING_FILE=/tmp/remaining_symbols.txt \
+            -v /tmp/collector-output:/tmp \
+            ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
+            crypto backfill \
+            --symbols "AAVEUSDT,POLUSDT,ATOMUSDT" \
+            --deadline-minutes 315
+
+      - name: Check remaining symbols
+        if: always()
+        run: |
+          if [ -f /tmp/collector-output/remaining_symbols.txt ]; then
+            REMAINING=$(cat /tmp/collector-output/remaining_symbols.txt)
+            if [ -n "$REMAINING" ]; then
+              echo "::warning::Remaining symbols for batch-8: $REMAINING"
+            fi
+          fi
+
+  batch-9:
+    if: inputs.symbols == '' && (inputs.batch == 'all' || inputs.batch == '9')
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Run backfill
+        run: |
+          mkdir -p /tmp/collector-output
+
+          docker run --rm \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e REMAINING_FILE=/tmp/remaining_symbols.txt \
+            -v /tmp/collector-output:/tmp \
+            ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
+            crypto backfill \
+            --symbols "ALGOUSDT,FILUSDT,INJUSDT" \
+            --deadline-minutes 315
+
+      - name: Check remaining symbols
+        if: always()
+        run: |
+          if [ -f /tmp/collector-output/remaining_symbols.txt ]; then
+            REMAINING=$(cat /tmp/collector-output/remaining_symbols.txt)
+            if [ -n "$REMAINING" ]; then
+              echo "::warning::Remaining symbols for batch-9: $REMAINING"
+            fi
+          fi
+
+  batch-10:
+    if: inputs.symbols == '' && (inputs.batch == 'all' || inputs.batch == '10')
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Run backfill
+        run: |
+          mkdir -p /tmp/collector-output
+
+          docker run --rm \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e REMAINING_FILE=/tmp/remaining_symbols.txt \
+            -v /tmp/collector-output:/tmp \
+            ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
+            crypto backfill \
+            --symbols "APTUSDT,SEIUSDT" \
+            --deadline-minutes 315
+
+      - name: Check remaining symbols
+        if: always()
+        run: |
+          if [ -f /tmp/collector-output/remaining_symbols.txt ]; then
+            REMAINING=$(cat /tmp/collector-output/remaining_symbols.txt)
+            if [ -n "$REMAINING" ]; then
+              echo "::warning::Remaining symbols for batch-10: $REMAINING"
             fi
           fi
