@@ -42,6 +42,22 @@ If a batch times out or fails, check the workflow warning for remaining symbols,
 - **batch**: the specific batch number (e.g., `3`)
 - **symbols**: the remaining symbols from the warning (e.g., `GRAMUSDT,LTCUSDT`)
 
+### Crypto Audit (`crypto-audit.yml`)
+
+Weekly integrity check. Scans all parquet data on HuggingFace for missing K-line candles and generates gap reports.
+
+- Trigger: `schedule` (every Sunday UTC 06:00) + manual `workflow_dispatch`
+- Duration: ~30-90 minutes (reads all shards, checks timestamp continuity)
+- Output: `reports/crypto/{SYMBOL}/{timeframe}.json` + `REPORTS.md`
+- Auto-commits results back to this repo
+
+Reports track:
+- Expected vs actual candle count per symbol/timeframe
+- Coverage percentage
+- Consolidated gap ranges (continuous missing periods merged)
+
+See [REPORTS.md](REPORTS.md) for the latest audit results.
+
 ## Secrets Required
 
 | Secret | Description |
@@ -61,5 +77,6 @@ If a batch times out or fails, check the workflow warning for remaining symbols,
 |----------|-----------|-------------|---------------|
 | crypto-daily | 30x/month | ~30 min | ~900 min |
 | crypto-backfill | ad-hoc | ~5h per batch | as needed |
+| crypto-audit | 4x/month | ~60 min | ~240 min |
 
-Total daily steady-state: ~900 min/month (well within 2000 min free tier).
+Total steady-state: ~1140 min/month (well within 2000 min free tier).
