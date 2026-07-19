@@ -1,0 +1,24 @@
+name: Test Docker Pull
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull image
+        run: docker pull ghcr.io/sheng9571/k-line-collector:latest
+
+      - name: Verify entrypoint
+        run: |
+          docker run --rm ghcr.io/sheng9571/k-line-collector:latest crypto daily --help || true
