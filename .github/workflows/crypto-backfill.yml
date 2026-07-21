@@ -181,7 +181,7 @@ jobs:
             -v /tmp/collector-output:/tmp \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto backfill \
-            --symbols "XMRUSDT,LINKUSDT,ADAUSDT" \
+            --symbols "LINKUSDT,ADAUSDT" \
             --deadline-minutes 315
 
       - name: Check remaining symbols
