@@ -91,12 +91,12 @@ jobs:
           Write-Host ""
           Write-Host " CONNECT:"
           if ($tunnelUrl) {
-            Write-Host "   cloudflared access rdp --hostname $tunnelUrl --url localhost:3389"
+            Write-Host "   cloudflared access rdp --hostname $tunnelUrl --url localhost:30678"
           } else {
-            Write-Host "   cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:3389"
+            Write-Host "   cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:30678"
           }
           Write-Host ""
-          Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:3389"
+          Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:30678"
           Write-Host "========================================================"
           Write-Host ""
 
@@ -104,6 +104,13 @@ jobs:
             Write-Host "--- cloudflared log ---"
             Get-Content "$env:TEMP\cloudflared.log"
           }
+
+      - name: Wait for RDP connection
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          Write-Host "Waiting 60s for you to connect via RDP before continuing..."
+          Start-Sleep -Seconds 60
+          Write-Host "Continuing with MT5 setup."
 
       # --- Setup environment ---
       - name: Clone collector repo
