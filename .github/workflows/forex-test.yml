@@ -26,19 +26,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $screenshotDir = Join-Path $env:RUNNER_TEMP "desktop-screenshots"
-<<<<<<< Updated upstream
-          New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
-
-          $scriptPath = Join-Path $env:RUNNER_TEMP "capture-desktop.ps1"
-          $pidPath = Join-Path $env:RUNNER_TEMP "capture-desktop.pid"
-=======
           $scriptPath = Join-Path $env:RUNNER_TEMP "capture-desktop.ps1"
           $pidPath = Join-Path $env:RUNNER_TEMP "capture-desktop.pid"
           $stdoutPath = Join-Path $env:RUNNER_TEMP "capture-desktop.stdout.log"
           $stderrPath = Join-Path $env:RUNNER_TEMP "capture-desktop.stderr.log"
 
           New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
->>>>>>> Stashed changes
 
           @'
           param(
@@ -46,11 +39,8 @@ jobs:
             [string]$OutputDirectory
           )
 
-<<<<<<< Updated upstream
-=======
           $ErrorActionPreference = "Continue"
 
->>>>>>> Stashed changes
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
 
@@ -60,21 +50,12 @@ jobs:
 
           while ($index -lt 180) {
             try {
-<<<<<<< Updated upstream
-              $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
-              $filename = "{0:D5}-{1}.png" -f $index, $timestamp
-              $outputPath = Join-Path $OutputDirectory $filename
-
-              $screens = [System.Windows.Forms.Screen]::AllScreens
-
-=======
               $screens = [System.Windows.Forms.Screen]::AllScreens
 
               if (-not $screens -or $screens.Count -eq 0) {
                 throw "No screens were detected."
               }
 
->>>>>>> Stashed changes
               $left = ($screens | ForEach-Object { $_.Bounds.Left } | Measure-Object -Minimum).Minimum
               $top = ($screens | ForEach-Object { $_.Bounds.Top } | Measure-Object -Minimum).Minimum
               $right = ($screens | ForEach-Object { $_.Bounds.Right } | Measure-Object -Maximum).Maximum
@@ -83,8 +64,6 @@ jobs:
               $width = $right - $left
               $height = $bottom - $top
 
-<<<<<<< Updated upstream
-=======
               if ($width -le 0 -or $height -le 0) {
                 throw "Invalid screen size: ${width}x${height}"
               }
@@ -93,7 +72,6 @@ jobs:
               $filename = "{0:D5}-{1}.png" -f $index, $timestamp
               $outputPath = Join-Path $OutputDirectory $filename
 
->>>>>>> Stashed changes
               $bitmap = New-Object System.Drawing.Bitmap $width, $height
               $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 
@@ -103,10 +81,7 @@ jobs:
                   [System.Drawing.Size]::new($width, $height)
                 )
                 $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
-<<<<<<< Updated upstream
-=======
                 Write-Output "Saved: $outputPath"
->>>>>>> Stashed changes
               }
               finally {
                 $graphics.Dispose()
@@ -114,15 +89,11 @@ jobs:
               }
             }
             catch {
-<<<<<<< Updated upstream
-              Write-Error "Screenshot failed: $($_.Exception.Message)"
-=======
               [Console]::Error.WriteLine(
                 "Screenshot failed at {0}: {1}" -f `
                   (Get-Date -Format "o"),
                   $_.Exception.ToString()
               )
->>>>>>> Stashed changes
             }
 
             $index++
@@ -130,23 +101,9 @@ jobs:
           }
           '@ | Set-Content -Path $scriptPath -Encoding UTF8
 
-<<<<<<< Updated upstream
-          $process = Start-Process `
-            -FilePath "pwsh.exe" `
-            -ArgumentList @(
-              "-NoLogo",
-              "-NoProfile",
-              "-ExecutionPolicy", "Bypass",
-              "-File", "`"$scriptPath`"",
-              "-OutputDirectory", "`"$screenshotDir`""
-            ) `
-            -WindowStyle Hidden `
-            -PassThru
-=======
           $originalTrackingId = $env:RUNNER_TRACKING_ID
 
           try {
-            # Prevent Actions Runner from killing the background process
             $env:RUNNER_TRACKING_ID = ""
 
             $process = Start-Process `
@@ -166,22 +123,11 @@ jobs:
           finally {
             $env:RUNNER_TRACKING_ID = $originalTrackingId
           }
->>>>>>> Stashed changes
 
           $process.Id | Set-Content -Path $pidPath -Encoding ASCII
 
           "SCREENSHOT_DIR=$screenshotDir" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-<<<<<<< Updated upstream
-
-          "SCREENSHOT_PID_FILE=$pidPath" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          Write-Host "Screenshot capture started."
-          Write-Host "PID: $($process.Id)"
-          Write-Host "Directory: $screenshotDir"
-          Write-Host "Max frames: 180 (about 6 minutes)"
-=======
           "SCREENSHOT_PID_FILE=$pidPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SCREENSHOT_STDOUT=$stdoutPath" |
@@ -189,7 +135,6 @@ jobs:
           "SCREENSHOT_STDERR=$stderrPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          # Verify screenshots are being produced
           Start-Sleep -Seconds 5
 
           $process.Refresh()
@@ -202,32 +147,28 @@ jobs:
             }
             Write-Host "::warning::Desktop screenshots will not be available. Continuing workflow."
           }
-
-          $firstScreenshot = Get-ChildItem `
-            -Path $screenshotDir `
-            -Filter "*.png" `
-            -File `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-
-          if (-not $firstScreenshot) {
-            Write-Host "::warning::No PNG produced in 5s. Checking diagnostics..."
-            Write-Host "========== screen info =========="
-            Add-Type -AssemblyName System.Windows.Forms
-            [System.Windows.Forms.Screen]::AllScreens |
-              Format-List DeviceName, Bounds, Primary
-            if (Test-Path $stderrPath) {
-              Write-Host "========== screenshot stderr =========="
-              Get-Content $stderrPath
-            }
-            Write-Host "::warning::Desktop screenshots may not work on this runner. Continuing workflow."
-          }
           else {
-            Write-Host "Screenshot capture verified:"
-            Get-Item $firstScreenshot.FullName |
-              Format-List FullName, Length, LastWriteTime
+            $firstScreenshot = Get-ChildItem `
+              -Path $screenshotDir `
+              -Filter "*.png" `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+
+            if (-not $firstScreenshot) {
+              Write-Host "::warning::No PNG produced in 5s."
+              if (Test-Path $stderrPath) {
+                Write-Host "========== screenshot stderr =========="
+                Get-Content $stderrPath
+              }
+              Write-Host "::warning::Desktop screenshots may not work on this runner. Continuing."
+            }
+            else {
+              Write-Host "Screenshot capture verified:"
+              Get-Item $firstScreenshot.FullName |
+                Format-List FullName, Length, LastWriteTime
+            }
           }
->>>>>>> Stashed changes
 
       - name: Download MT5 installer
         shell: pwsh
@@ -240,7 +181,6 @@ jobs:
           Write-Host "Downloading MT5 installer..."
           Invoke-WebRequest -Uri $url -OutFile $output -TimeoutSec 120
 
-          # Verify downloaded file is a valid PE executable
           $bytes = [System.IO.File]::ReadAllBytes($output)
           if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
             throw "Downloaded file is not a valid Windows executable."
@@ -272,10 +212,8 @@ jobs:
           $exitCode = $process.ExitCode
           Write-Host "Installer exit code: $exitCode"
 
-          # Give child processes/filesystem a moment to settle
           Start-Sleep -Seconds 10
 
-          # Search for terminal64.exe
           $candidatePaths = @(
             "$env:ProgramFiles\MetaTrader 5\terminal64.exe",
             "$env:LOCALAPPDATA\Programs\MetaTrader 5\terminal64.exe"
@@ -308,13 +246,9 @@ jobs:
           }
           else {
             Write-Host "::error::terminal64.exe was not found."
-            Write-Host "Processes still related to setup:"
             Get-Process |
-              Where-Object {
-                $_.ProcessName -match 'mt5|meta|setup|terminal'
-              } |
+              Where-Object { $_.ProcessName -match 'mt5|meta|setup|terminal' } |
               Format-Table Id, ProcessName, SessionId, Path -AutoSize
-
             throw "MT5 installation failed with exit code $exitCode."
           }
 
@@ -327,7 +261,6 @@ jobs:
             throw "MT5_PATH is missing or invalid: $env:MT5_PATH"
           }
 
-          # Stop anything launched by the installer
           Get-Process terminal64 -ErrorAction SilentlyContinue |
             Stop-Process -Force -ErrorAction SilentlyContinue
 
@@ -341,30 +274,21 @@ jobs:
             Remove-Item $portableDir -Recurse -Force
           }
 
-          Write-Host "Copying MT5 from:"
-          Write-Host "  $sourceDir"
-          Write-Host "to:"
-          Write-Host "  $portableDir"
+          Write-Host "Copying MT5 from: $sourceDir"
+          Write-Host "To: $portableDir"
 
-          New-Item -ItemType Directory -Path $portableDir -Force |
-            Out-Null
+          New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
 
-          Copy-Item `
-            -Path "$sourceDir\*" `
-            -Destination $portableDir `
-            -Recurse `
-            -Force
+          Copy-Item -Path "$sourceDir\*" -Destination $portableDir -Recurse -Force
 
           if (-not (Test-Path $portableExe)) {
             throw "Portable terminal was not created: $portableExe"
           }
 
-          # Enables portable data-directory behavior for MT5
           New-Item `
             -ItemType File `
             -Path (Join-Path $portableDir "portable") `
-            -Force |
-            Out-Null
+            -Force | Out-Null
 
           "MT5_PATH=$portableExe" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -372,11 +296,7 @@ jobs:
           "MT5_DATA_DIR=$portableDir" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          Write-Host "Portable MT5 prepared:"
-          Write-Host "  $portableExe"
-
-          Get-Item $portableExe |
-            Format-List FullName, Length, LastWriteTime
+          Write-Host "Portable MT5 prepared: $portableExe"
 
       - name: Test MT5 IPC, login and K-line access
         shell: pwsh
@@ -393,7 +313,6 @@ jobs:
 
           import MetaTrader5 as mt5
 
-
           terminal_path = Path(os.environ["MT5_PATH"])
           login = int(os.environ["MT5_LOGIN"])
           password = os.environ["MT5_PASSWORD"]
@@ -408,13 +327,10 @@ jobs:
           if not terminal_path.exists():
               raise FileNotFoundError(terminal_path)
 
-          # First establish IPC only. Do not combine IPC startup and account login,
-          # because that makes diagnosis harder.
           initialized = False
 
           for attempt in range(1, 4):
               print(f"IPC initialization attempt {attempt}/3...")
-
               mt5.shutdown()
 
               initialized = mt5.initialize(
@@ -428,11 +344,7 @@ jobs:
                   break
 
               print(f"IPC initialization failed: {mt5.last_error()}")
-
-              # Kill the failed Terminal instance before another attempt
-              os.system(
-                  'taskkill /F /IM terminal64.exe >NUL 2>&1'
-              )
+              os.system('taskkill /F /IM terminal64.exe >NUL 2>&1')
               time.sleep(10)
 
           if not initialized:
@@ -441,11 +353,8 @@ jobs:
 
           try:
               terminal_info = mt5.terminal_info()
-
               if terminal_info is None:
-                  raise RuntimeError(
-                      f"terminal_info failed: {mt5.last_error()}"
-                  )
+                  raise RuntimeError(f"terminal_info failed: {mt5.last_error()}")
 
               print("Terminal IPC information:")
               print(f"  name: {terminal_info.name}")
@@ -462,93 +371,58 @@ jobs:
                   server=server,
                   timeout=60_000,
               ):
-                  raise RuntimeError(
-                      f"MT5 login failed: {mt5.last_error()}"
-                  )
+                  raise RuntimeError(f"MT5 login failed: {mt5.last_error()}")
 
               account_info = mt5.account_info()
-
               if account_info is None:
-                  raise RuntimeError(
-                      f"account_info failed: {mt5.last_error()}"
-                  )
+                  raise RuntimeError(f"account_info failed: {mt5.last_error()}")
 
               print("Account login succeeded:")
               print(f"  login: {account_info.login}")
               print(f"  server: {account_info.server}")
               print(f"  company: {account_info.company}")
 
-              # EURUSD may have a broker-specific suffix
               symbols = mt5.symbols_get()
-
               if symbols is None:
-                  raise RuntimeError(
-                      f"symbols_get failed: {mt5.last_error()}"
-                  )
+                  raise RuntimeError(f"symbols_get failed: {mt5.last_error()}")
 
               symbol_names = [item.name for item in symbols]
 
               symbol = next(
-                  (
-                      name
-                      for name in symbol_names
-                      if name.upper() == "EURUSD"
-                  ),
+                  (name for name in symbol_names if name.upper() == "EURUSD"),
                   None,
               )
-
               if symbol is None:
                   symbol = next(
-                      (
-                          name
-                          for name in symbol_names
-                          if name.upper().startswith("EURUSD")
-                      ),
+                      (name for name in symbol_names if name.upper().startswith("EURUSD")),
                       None,
                   )
-
               if symbol is None:
                   sample = symbol_names[:30]
                   raise RuntimeError(
-                      "Could not find an EURUSD-compatible symbol. "
-                      f"First available symbols: {sample}"
+                      f"Could not find EURUSD-compatible symbol. First symbols: {sample}"
                   )
 
               print(f"Using symbol: {symbol}")
 
               if not mt5.symbol_select(symbol, True):
-                  raise RuntimeError(
-                      f"symbol_select failed: {mt5.last_error()}"
-                  )
+                  raise RuntimeError(f"symbol_select failed: {mt5.last_error()}")
 
-              rates = mt5.copy_rates_from_pos(
-                  symbol,
-                  mt5.TIMEFRAME_M1,
-                  0,
-                  10,
-              )
+              rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, 10)
 
               if rates is None:
-                  raise RuntimeError(
-                      f"copy_rates_from_pos failed: {mt5.last_error()}"
-                  )
+                  raise RuntimeError(f"copy_rates_from_pos failed: {mt5.last_error()}")
 
               print(f"Received {len(rates)} bars.")
-
               for rate in rates[-3:]:
                   print(
-                      f"time={rate['time']} "
-                      f"open={rate['open']} "
-                      f"high={rate['high']} "
-                      f"low={rate['low']} "
-                      f"close={rate['close']}"
+                      f"time={rate['time']} open={rate['open']} "
+                      f"high={rate['high']} low={rate['low']} close={rate['close']}"
                   )
 
           finally:
               mt5.shutdown()
-          '@ | Set-Content `
-            -Path "$env:RUNNER_TEMP\test_mt5.py" `
-            -Encoding UTF8
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\test_mt5.py" -Encoding UTF8
 
           python "$env:RUNNER_TEMP\test_mt5.py"
 
@@ -557,13 +431,11 @@ jobs:
           if ($pythonExitCode -ne 0) {
             Write-Host ""
             Write-Host "========== MT5 process diagnostics =========="
-
             Get-Process terminal64 -ErrorAction SilentlyContinue |
               Format-List Id, SessionId, Path, StartTime, Responding
 
             Write-Host ""
             Write-Host "========== MT5 log files =========="
-
             $logFiles = Get-ChildItem `
               -Path $env:MT5_DATA_DIR `
               -Filter "*.log" `
@@ -576,8 +448,7 @@ jobs:
             foreach ($log in $logFiles) {
               Write-Host ""
               Write-Host "----- $($log.FullName) -----"
-              Get-Content $log.FullName -Tail 100 `
-                -ErrorAction SilentlyContinue
+              Get-Content $log.FullName -Tail 100 -ErrorAction SilentlyContinue
             }
 
             exit $pythonExitCode
@@ -587,63 +458,29 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          if (
-            $env:SCREENSHOT_PID_FILE -and
-            (Test-Path $env:SCREENSHOT_PID_FILE)
-          ) {
-            $capturePid = Get-Content $env:SCREENSHOT_PID_FILE |
-              Select-Object -First 1
-
+          if ($env:SCREENSHOT_PID_FILE -and (Test-Path $env:SCREENSHOT_PID_FILE)) {
+            $capturePid = Get-Content $env:SCREENSHOT_PID_FILE | Select-Object -First 1
             if ($capturePid) {
               Write-Host "Stopping screenshot process PID: $capturePid"
-              Stop-Process `
-                -Id ([int]$capturePid) `
-                -Force `
-                -ErrorAction SilentlyContinue
+              Stop-Process -Id ([int]$capturePid) -Force -ErrorAction SilentlyContinue
             }
           }
 
           Start-Sleep -Seconds 2
 
-          if (
-            $env:SCREENSHOT_DIR -and
-            (Test-Path $env:SCREENSHOT_DIR)
-          ) {
-            $files = Get-ChildItem `
-              -Path $env:SCREENSHOT_DIR `
-              -Filter "*.png" `
-              -File `
-              -ErrorAction SilentlyContinue
-
+          if ($env:SCREENSHOT_DIR -and (Test-Path $env:SCREENSHOT_DIR)) {
+            $files = Get-ChildItem -Path $env:SCREENSHOT_DIR -Filter "*.png" -File -ErrorAction SilentlyContinue
             Write-Host "Captured screenshots: $($files.Count)"
-
-            $files |
-              Sort-Object Name |
-              Select-Object -First 5 |
-              Format-Table Name, Length, LastWriteTime
+            $files | Sort-Object Name | Select-Object -First 5 | Format-Table Name, Length, LastWriteTime
           }
 
-<<<<<<< Updated upstream
-      - name: Upload desktop screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mt5-desktop-screenshots
-          path: ${{ runner.temp }}/desktop-screenshots
-=======
-          if (
-            $env:SCREENSHOT_STDOUT -and
-            (Test-Path $env:SCREENSHOT_STDOUT)
-          ) {
+          if ($env:SCREENSHOT_STDOUT -and (Test-Path $env:SCREENSHOT_STDOUT)) {
             Write-Host ""
             Write-Host "========== screenshot stdout (last 50 lines) =========="
             Get-Content $env:SCREENSHOT_STDOUT -Tail 50
           }
 
-          if (
-            $env:SCREENSHOT_STDERR -and
-            (Test-Path $env:SCREENSHOT_STDERR)
-          ) {
+          if ($env:SCREENSHOT_STDERR -and (Test-Path $env:SCREENSHOT_STDERR)) {
             Write-Host ""
             Write-Host "========== screenshot stderr =========="
             Get-Content $env:SCREENSHOT_STDERR -Tail 100
@@ -658,6 +495,5 @@ jobs:
             ${{ runner.temp }}/desktop-screenshots
             ${{ runner.temp }}/capture-desktop.stdout.log
             ${{ runner.temp }}/capture-desktop.stderr.log
->>>>>>> Stashed changes
           if-no-files-found: warn
           retention-days: 3
