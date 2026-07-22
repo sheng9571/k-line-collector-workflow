@@ -59,27 +59,28 @@ jobs:
           $id = $null
           for ($i = 1; $i -le 12; $i++) {
             Write-Host "Waiting for RustDesk ID... attempt $i/12"
-            $output = cmd.exe /c "`"$rustdesk`" --get-id | more"
-            $candidate = ($output | Out-String).Trim()
-            Write-Host "Raw output: [$candidate]"
+            $raw = cmd.exe /c "`"$rustdesk`" --get-id | more" 2>&1 | Out-String
+            Write-Host "Raw output: [$($raw.Trim())]"
 
-            if ($candidate -match '^\d{6,}$') {
-              $id = $candidate
+            $match = [regex]::Match($raw, '(?<!\d)\d{6,12}(?!\d)')
+            if ($match.Success) {
+              $id = $match.Value
               break
             }
             Start-Sleep -Seconds 5
           }
 
           # Diagnostics if ID not found
-          if ([string]::IsNullOrWhiteSpace($id)) {
+          if (-not $id) {
             Write-Host ""
             Write-Host "--- RustDesk process info ---"
             Get-Process rustdesk -ErrorAction SilentlyContinue | Format-List Id, SessionId, Path, StartTime
             Write-Host ""
-            Write-Host "--- Network connectivity to RustDesk relay ---"
-            Test-NetConnection rendezvous.rustdesk.com -Port 21116
+            Write-Host "--- Network connectivity ---"
+            Resolve-DnsName github.com -ErrorAction SilentlyContinue
+            Test-NetConnection github.com -Port 443
             Write-Host ""
-            throw "RustDesk did not return an ID after 60 seconds."
+            throw "RustDesk did not return a recognizable ID after 60 seconds."
           }
 
           Write-Host ""
