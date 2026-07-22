@@ -1,127 +1,14 @@
-name: Forex Test (MT5 + RustDesk)
+name: Forex Test (MT5)
 
 on:
   workflow_dispatch:
-    inputs:
-      debug_remote:
-        description: 'Remote desktop: none, rustdesk'
-        required: false
-        default: 'none'
-        type: choice
-        options:
-          - none
-          - rustdesk
-      debug_timeout_minutes:
-        description: 'Minutes to keep runner alive for remote access'
-        required: false
-        default: '30'
 
 jobs:
   test-mt5:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
 
     steps:
-      # --- RustDesk Remote Access (first, so you can observe everything) ---
-      - name: Download RustDesk
-        if: inputs.debug_remote == 'rustdesk'
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
-          $version = $release.tag_name
-          $asset = $release.assets | Where-Object { $_.name -match "^rustdesk-.*-x86_64\.exe$" } | Select-Object -First 1
-
-          if (-not $asset) {
-            Write-Host "::error::Could not find RustDesk x86_64 exe in release $version"
-            $release.assets | ForEach-Object { Write-Host "  - $($_.name)" }
-            exit 1
-          }
-
-          Write-Host "Downloading: $($asset.name) ($version)"
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:TEMP\rustdesk.exe" -TimeoutSec 120
-          Write-Host "Download complete."
-
-      - name: Start RustDesk and show connection info
-        if: inputs.debug_remote == 'rustdesk'
-        shell: pwsh
-        env:
-          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $bootstrapExe = "$env:TEMP\rustdesk.exe"
-
-          # Use secret password if set; otherwise generate random
-          $password = $env:RUSTDESK_PASSWORD
-          if ([string]::IsNullOrWhiteSpace($password)) {
-            $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-            $password = -join (1..16 | ForEach-Object {
-              $alphabet[(Get-Random -Maximum $alphabet.Length)]
-            })
-          }
-
-          # Start bootstrap/portable executable, let it extract the real client
-          Start-Process -FilePath $bootstrapExe
-          Start-Sleep -Seconds 15
-
-          # Find the actual running RustDesk executable (extracted to LOCALAPPDATA)
-          $processes = Get-Process rustdesk -ErrorAction SilentlyContinue
-          $actualExe = $processes |
-            Where-Object {
-              $_.Path -and
-              $_.Path -like "$env:LOCALAPPDATA\rustdesk\*"
-            } |
-            Select-Object -ExpandProperty Path -Unique |
-            Select-Object -First 1
-
-          if (-not $actualExe) {
-            Write-Host "RustDesk processes:"
-            $processes | Format-List Id, SessionId, Path, StartTime
-            throw "Could not locate the extracted RustDesk executable."
-          }
-
-          Write-Host "Active RustDesk executable: $actualExe"
-
-          # Set permanent password
-          $passwordOutput = & $actualExe --password $password 2>&1 | Out-String
-          $passwordExitCode = $LASTEXITCODE
-          Write-Host "Password command exit code: $passwordExitCode"
-          if (-not [string]::IsNullOrWhiteSpace($passwordOutput)) {
-            Write-Host "Password command output: [$($passwordOutput.Trim())]"
-          }
-          Start-Sleep -Seconds 5
-
-          # Get ID with retry
-          $id = $null
-          for ($i = 1; $i -le 12; $i++) {
-            Write-Host "Waiting for RustDesk ID... attempt $i/12"
-            $raw = cmd.exe /c "`"$actualExe`" --get-id | more" 2>&1 |
-              Out-String
-            Write-Host "Raw output: [$($raw.Trim())]"
-
-            $match = [regex]::Match($raw, '(?<!\d)\d{6,12}(?!\d)')
-            if ($match.Success) {
-              $id = $match.Value
-              break
-            }
-            Start-Sleep -Seconds 5
-          }
-
-          if (-not $id) {
-            Get-Process rustdesk -ErrorAction SilentlyContinue |
-              Format-List Id, SessionId, Path, StartTime
-            throw "RustDesk did not return a recognizable ID."
-          }
-
-          Write-Host ""
-          Write-Host "========================================================"
-          Write-Host " RUSTDESK CONNECTION INFO"
-          Write-Host "========================================================"
-          Write-Host " RustDesk ID: $id"
-          Write-Host " Password:    $password"
-          Write-Host "========================================================"
-
-      # --- Setup environment ---
       - name: Clone collector repo
         run: git clone --depth 1 https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git
 
@@ -133,8 +20,8 @@ jobs:
       - name: Install Python dependencies
         run: pip install MetaTrader5 pyarrow huggingface_hub pyyaml numpy
 
-      # --- MT5 Install and Test ---
       - name: Download MT5 installer
+        shell: pwsh
         run: |
           $url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
           $output = "$env:TEMP\mt5setup.exe"
@@ -142,70 +29,182 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $output -TimeoutSec 120
           Write-Host "Download complete: $output"
 
-      - name: Install MT5 Terminal (silent)
+      - name: Install MT5 Terminal
+        shell: pwsh
         run: |
-          $installer = "$env:TEMP\mt5setup.exe"
-          Write-Host "Installing MT5 Terminal in silent mode..."
-          Start-Process -FilePath $installer -ArgumentList "/auto" -Wait -NoNewWindow
-          Write-Host "MT5 installation complete."
+          $ErrorActionPreference = 'Stop'
 
-      - name: Wait for MT5 Terminal process
+          $installer = "$env:TEMP\mt5setup.exe"
+
+          Write-Host "Installing MT5 Terminal..."
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList "/auto" `
+            -PassThru
+
+          $timeoutSeconds = 300
+
+          if (-not $process.WaitForExit($timeoutSeconds * 1000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "MT5 installer did not finish within $timeoutSeconds seconds."
+          }
+
+          Write-Host "Installer exit code: $($process.ExitCode)"
+
+          if ($process.ExitCode -ne 0) {
+            throw "MT5 installer failed with exit code $($process.ExitCode)."
+          }
+
+      - name: Locate and start MT5 Terminal
+        shell: pwsh
         run: |
-          $timeout = 60
-          $elapsed = 0
-          while ($elapsed -lt $timeout) {
-            $proc = Get-Process -Name "terminal64" -ErrorAction SilentlyContinue
-            if ($proc) {
-              Write-Host "MT5 Terminal is running (PID: $($proc.Id))"
+          $ErrorActionPreference = 'Stop'
+
+          Write-Host "Searching for terminal64.exe..."
+
+          $terminal = $null
+
+          # Check common paths first
+          $commonPaths = @(
+            "$env:ProgramFiles\MetaTrader 5\terminal64.exe",
+            "$env:LOCALAPPDATA\Programs\MetaTrader 5\terminal64.exe"
+          )
+
+          foreach ($path in $commonPaths) {
+            if (Test-Path $path) {
+              $terminal = Get-Item $path
               break
             }
-            Start-Sleep -Seconds 5
-            $elapsed += 5
-            Write-Host "Waiting for MT5 Terminal... ($elapsed/$timeout s)"
           }
-          if (-not (Get-Process -Name "terminal64" -ErrorAction SilentlyContinue)) {
-            Write-Host "::warning::MT5 Terminal process not detected after ${timeout}s"
+
+          # Fallback: search Program Files and LOCALAPPDATA
+          if (-not $terminal) {
+            $searchRoots = @(
+              "$env:ProgramFiles",
+              "${env:ProgramFiles(x86)}",
+              "$env:LOCALAPPDATA\Programs",
+              "C:\"
+            ) | Where-Object { $_ -and (Test-Path $_) }
+
+            foreach ($root in $searchRoots) {
+              Write-Host "Searching under: $root"
+
+              $terminal = Get-ChildItem `
+                -Path $root `
+                -Filter "terminal64.exe" `
+                -File `
+                -Recurse `
+                -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+
+              if ($terminal) {
+                break
+              }
+            }
+          }
+
+          if (-not $terminal) {
+            Write-Host ""
+            Write-Host "Installed directories under Program Files:"
+            Get-ChildItem "$env:ProgramFiles" -Directory -ErrorAction SilentlyContinue |
+              Select-Object FullName
+            throw "MT5 installation finished, but terminal64.exe was not found."
+          }
+
+          $terminalPath = $terminal.FullName
+          Write-Host "MT5 terminal found: $terminalPath"
+
+          # Save path for subsequent steps
+          "MT5_PATH=$terminalPath" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          # Explicitly start MT5
+          $proc = Start-Process -FilePath $terminalPath -PassThru
+          Write-Host "Started MT5, initial PID: $($proc.Id)"
+
+          # Wait up to 90 seconds for process to be running
+          $running = $null
+          for ($i = 1; $i -le 18; $i++) {
+            $running = Get-Process -Name "terminal64" -ErrorAction SilentlyContinue |
+              Select-Object -First 1
+
+            if ($running) {
+              Write-Host "MT5 Terminal is running."
+              Write-Host "PID: $($running.Id)"
+              Write-Host "Session: $($running.SessionId)"
+              Write-Host "Path: $($running.Path)"
+              break
+            }
+
+            Write-Host "Waiting for MT5 Terminal... attempt $i/18"
+            Start-Sleep -Seconds 5
+          }
+
+          if (-not $running) {
+            throw "terminal64.exe was started but no running MT5 process was detected."
           }
 
       - name: Test MT5 connection
+        shell: pwsh
         env:
           MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
           MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
           MT5_SERVER: ${{ secrets.MT5_SERVER }}
         run: |
-          python -c "
-          import MetaTrader5 as mt5
+          @'
           import os
+          import sys
+          import MetaTrader5 as mt5
 
-          login = int(os.environ['MT5_LOGIN'])
-          password = os.environ['MT5_PASSWORD']
-          server = os.environ['MT5_SERVER']
+          login = int(os.environ["MT5_LOGIN"])
+          password = os.environ["MT5_PASSWORD"]
+          server = os.environ["MT5_SERVER"]
+          terminal_path = os.environ["MT5_PATH"]
 
-          print(f'Connecting to {server} with login {login}...')
-          result = mt5.initialize(login=login, password=password, server=server)
-          if result:
-              info = mt5.terminal_info()
-              print(f'Connected successfully!')
-              print(f'Terminal: {info.name}')
-              print(f'Build: {info.build}')
-              print(f'Server: {info.connected}')
+          print(f"Terminal path: {terminal_path}")
+          print(f"Connecting to {server} with login {login}...")
+
+          result = mt5.initialize(
+              path=terminal_path,
+              login=login,
+              password=password,
+              server=server,
+              timeout=60000,
+          )
+
+          if not result:
+              code, message = mt5.last_error()
+              print(f"MT5 initialize failed: code={code}, message={message}")
+              sys.exit(1)
+
+          try:
+              terminal_info = mt5.terminal_info()
+              account_info = mt5.account_info()
+
+              print("Connected successfully.")
+              print(f"Terminal connected: {terminal_info.connected}")
+              print(f"Terminal build: {terminal_info.build}")
+              print(f"Account login: {account_info.login}")
+              print(f"Account server: {account_info.server}")
+
+              rates = mt5.copy_rates_from_pos(
+                  "EURUSD",
+                  mt5.TIMEFRAME_M1,
+                  0,
+                  10,
+              )
+
+              if rates is None:
+                  code, message = mt5.last_error()
+                  raise RuntimeError(
+                      f"copy_rates_from_pos failed: code={code}, message={message}"
+                  )
+
+              print(f"Received {len(rates)} EURUSD M1 bars.")
+
+          finally:
               mt5.shutdown()
-          else:
-              code, msg = mt5.last_error()
-              print(f'Connection FAILED: code={code}, msg={msg}')
-              exit(1)
-          "
+          '@ | Set-Content -Path "$env:TEMP\test_mt5.py" -Encoding UTF8
 
-      # --- Keep alive for remote debugging ---
-      - name: Keep alive for remote debugging
-        if: always() && inputs.debug_remote == 'rustdesk'
-        run: |
-          $minutes = [int]"${{ inputs.debug_timeout_minutes }}"
-          Write-Host ""
-          Write-Host "========================================================"
-          Write-Host " ALL STEPS COMPLETE - KEEPING ALIVE FOR REMOTE DEBUG"
-          Write-Host " Runner will shut down in $minutes minutes."
-          Write-Host " RustDesk is still active. Connect now if needed."
-          Write-Host "========================================================"
-          Start-Sleep -Seconds ($minutes * 60)
-          Write-Host "Debug timeout reached. Shutting down."
+          python "$env:TEMP\test_mt5.py"
