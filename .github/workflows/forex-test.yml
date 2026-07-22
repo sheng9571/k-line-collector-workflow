@@ -12,17 +12,17 @@ on:
           - none
           - cloudflare
       debug_timeout_minutes:
-        description: 'Minutes to keep RDP session alive (only when debug_rdp=cloudflare)'
+        description: 'Minutes to keep runner alive after MT5 steps (only when debug_rdp=cloudflare)'
         required: false
         default: '30'
 
 jobs:
   test-mt5:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
-      # --- RDP Debug (first, so you can observe everything) ---
+      # --- RDP Debug (background tunnel, stays alive until job ends) ---
       - name: Enable Remote Desktop
         if: inputs.debug_rdp == 'cloudflare'
         run: |
@@ -49,13 +49,15 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\cloudflared.exe" -TimeoutSec 60
           Write-Host "cloudflared downloaded."
 
-      - name: Start Cloudflare Tunnel
+      - name: Start Cloudflare Tunnel (background)
         if: inputs.debug_rdp == 'cloudflare'
         run: |
+          # Start tunnel as background process - stays alive until job ends
           Start-Process -FilePath "$env:TEMP\cloudflared.exe" `
             -ArgumentList "tunnel --url rdp://localhost:3389" `
             -NoNewWindow -RedirectStandardError "$env:TEMP\cloudflared.log"
 
+          # Wait for tunnel URL
           $timeout = 30
           $elapsed = 0
           $tunnelUrl = ""
@@ -85,7 +87,6 @@ jobs:
           Write-Host " Username: $env:RDP_USER"
           Write-Host " Password: $env:RDP_PASS"
           Write-Host ""
-          Write-Host "========================================================"
           Write-Host " CLIENT SETUP (one-time):"
           Write-Host "   winget install cloudflare.cloudflared"
           Write-Host ""
@@ -99,18 +100,15 @@ jobs:
           Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:30678"
           Write-Host "========================================================"
           Write-Host ""
+          Write-Host " Tunnel is running in background. You can connect at any"
+          Write-Host " time while the workflow is still running."
+          Write-Host "========================================================"
 
           if (-not $tunnelUrl -and (Test-Path "$env:TEMP\cloudflared.log")) {
+            Write-Host ""
             Write-Host "--- cloudflared log ---"
             Get-Content "$env:TEMP\cloudflared.log"
           }
-
-      - name: Wait for RDP connection
-        if: inputs.debug_rdp == 'cloudflare'
-        run: |
-          Write-Host "Waiting 60s for you to connect via RDP before continuing..."
-          Start-Sleep -Seconds 60
-          Write-Host "Continuing with MT5 setup."
 
       # --- Setup environment ---
       - name: Clone collector repo
@@ -187,12 +185,16 @@ jobs:
               exit(1)
           "
 
-      # --- Keep alive for debugging ---
+      # --- Keep alive for RDP debugging (after all steps complete) ---
       - name: Keep alive for RDP debugging
-        if: inputs.debug_rdp == 'cloudflare'
+        if: always() && inputs.debug_rdp == 'cloudflare'
         run: |
           $minutes = [int]"${{ inputs.debug_timeout_minutes }}"
-          Write-Host "Keeping runner alive for $minutes minutes for RDP debugging..."
-          Write-Host "Workflow will terminate after this timeout."
+          Write-Host ""
+          Write-Host "========================================================"
+          Write-Host " ALL STEPS COMPLETE - KEEPING ALIVE FOR RDP DEBUG"
+          Write-Host " Runner will shut down in $minutes minutes."
+          Write-Host " RDP tunnel is still active. Connect now if needed."
+          Write-Host "========================================================"
           Start-Sleep -Seconds ($minutes * 60)
           Write-Host "Debug timeout reached. Shutting down."
