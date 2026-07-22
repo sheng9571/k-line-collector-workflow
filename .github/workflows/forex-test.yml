@@ -44,22 +44,59 @@ jobs:
 
       - name: Start RustDesk and show connection info
         if: inputs.debug_remote == 'rustdesk'
+        shell: pwsh
+        env:
+          RUSTDESK_PASSWORD: ${{ secrets.RUSTDESK_PASSWORD }}
         run: |
-          $rustdesk = "$env:TEMP\rustdesk.exe"
-          $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
+          $ErrorActionPreference = 'Stop'
+          $bootstrapExe = "$env:TEMP\rustdesk.exe"
 
-          # Start RustDesk in portable mode
-          Start-Process -FilePath $rustdesk
+          # Use secret password if set; otherwise generate random
+          $password = $env:RUSTDESK_PASSWORD
+          if ([string]::IsNullOrWhiteSpace($password)) {
+            $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+            $password = -join (1..16 | ForEach-Object {
+              $alphabet[(Get-Random -Maximum $alphabet.Length)]
+            })
+          }
+
+          # Start bootstrap/portable executable, let it extract the real client
+          Start-Process -FilePath $bootstrapExe
           Start-Sleep -Seconds 15
 
-          # Set permanent password
-          & $rustdesk --password $password | Out-String
+          # Find the actual running RustDesk executable (extracted to LOCALAPPDATA)
+          $processes = Get-Process rustdesk -ErrorAction SilentlyContinue
+          $actualExe = $processes |
+            Where-Object {
+              $_.Path -and
+              $_.Path -like "$env:LOCALAPPDATA\rustdesk\*"
+            } |
+            Select-Object -ExpandProperty Path -Unique |
+            Select-Object -First 1
 
-          # Wait for ID with retry
+          if (-not $actualExe) {
+            Write-Host "RustDesk processes:"
+            $processes | Format-List Id, SessionId, Path, StartTime
+            throw "Could not locate the extracted RustDesk executable."
+          }
+
+          Write-Host "Active RustDesk executable: $actualExe"
+
+          # Set permanent password
+          $passwordOutput = & $actualExe --password $password 2>&1 | Out-String
+          $passwordExitCode = $LASTEXITCODE
+          Write-Host "Password command exit code: $passwordExitCode"
+          if (-not [string]::IsNullOrWhiteSpace($passwordOutput)) {
+            Write-Host "Password command output: [$($passwordOutput.Trim())]"
+          }
+          Start-Sleep -Seconds 5
+
+          # Get ID with retry
           $id = $null
           for ($i = 1; $i -le 12; $i++) {
             Write-Host "Waiting for RustDesk ID... attempt $i/12"
-            $raw = cmd.exe /c "`"$rustdesk`" --get-id | more" 2>&1 | Out-String
+            $raw = cmd.exe /c "`"$actualExe`" --get-id | more" 2>&1 |
+              Out-String
             Write-Host "Raw output: [$($raw.Trim())]"
 
             $match = [regex]::Match($raw, '(?<!\d)\d{6,12}(?!\d)')
@@ -70,36 +107,19 @@ jobs:
             Start-Sleep -Seconds 5
           }
 
-          # Diagnostics if ID not found
           if (-not $id) {
-            Write-Host ""
-            Write-Host "--- RustDesk process info ---"
-            Get-Process rustdesk -ErrorAction SilentlyContinue | Format-List Id, SessionId, Path, StartTime
-            Write-Host ""
-            Write-Host "--- Network connectivity ---"
-            Resolve-DnsName github.com -ErrorAction SilentlyContinue
-            Test-NetConnection github.com -Port 443
-            Write-Host ""
-            throw "RustDesk did not return a recognizable ID after 60 seconds."
+            Get-Process rustdesk -ErrorAction SilentlyContinue |
+              Format-List Id, SessionId, Path, StartTime
+            throw "RustDesk did not return a recognizable ID."
           }
 
           Write-Host ""
           Write-Host "========================================================"
           Write-Host " RUSTDESK CONNECTION INFO"
           Write-Host "========================================================"
-          Write-Host ""
           Write-Host " RustDesk ID: $id"
           Write-Host " Password:    $password"
-          Write-Host ""
           Write-Host "========================================================"
-          Write-Host " HOW TO CONNECT:"
-          Write-Host ""
-          Write-Host " 1. Download RustDesk: https://rustdesk.com/download"
-          Write-Host " 2. Open RustDesk on your local machine"
-          Write-Host " 3. Enter the ID above in the connection field"
-          Write-Host " 4. Enter the password when prompted"
-          Write-Host "========================================================"
-          Write-Host ""
 
       # --- Setup environment ---
       - name: Clone collector repo
