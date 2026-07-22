@@ -1,0 +1,194 @@
+name: Forex Test (MT5 + RDP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug_rdp:
+        description: 'RDP debug mode: none, cloudflare'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - cloudflare
+      debug_timeout_minutes:
+        description: 'Minutes to keep RDP session alive (only when debug_rdp=cloudflare)'
+        required: false
+        default: '30'
+
+jobs:
+  test-mt5:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Clone collector repo
+        run: git clone --depth 1 https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install MetaTrader5 pyarrow huggingface_hub pyyaml numpy
+
+      - name: Download MT5 installer
+        run: |
+          $url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
+          $output = "$env:TEMP\mt5setup.exe"
+          Write-Host "Downloading MT5 installer..."
+          Invoke-WebRequest -Uri $url -OutFile $output -TimeoutSec 120
+          Write-Host "Download complete: $output"
+
+      - name: Install MT5 Terminal (silent)
+        run: |
+          $installer = "$env:TEMP\mt5setup.exe"
+          Write-Host "Installing MT5 Terminal in silent mode..."
+          Start-Process -FilePath $installer -ArgumentList "/auto" -Wait -NoNewWindow
+          Write-Host "MT5 installation complete."
+
+      - name: Wait for MT5 Terminal process
+        run: |
+          $timeout = 60
+          $elapsed = 0
+          while ($elapsed -lt $timeout) {
+            $proc = Get-Process -Name "terminal64" -ErrorAction SilentlyContinue
+            if ($proc) {
+              Write-Host "MT5 Terminal is running (PID: $($proc.Id))"
+              break
+            }
+            Start-Sleep -Seconds 5
+            $elapsed += 5
+            Write-Host "Waiting for MT5 Terminal... ($elapsed/$timeout s)"
+          }
+          if (-not (Get-Process -Name "terminal64" -ErrorAction SilentlyContinue)) {
+            Write-Host "::warning::MT5 Terminal process not detected after ${timeout}s"
+          }
+
+      - name: Test MT5 connection
+        env:
+          MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+          MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+          MT5_SERVER: ${{ secrets.MT5_SERVER }}
+        run: |
+          python -c "
+          import MetaTrader5 as mt5
+          import os
+
+          login = int(os.environ['MT5_LOGIN'])
+          password = os.environ['MT5_PASSWORD']
+          server = os.environ['MT5_SERVER']
+
+          print(f'Connecting to {server} with login {login}...')
+          result = mt5.initialize(login=login, password=password, server=server)
+          if result:
+              info = mt5.terminal_info()
+              print(f'Connected successfully!')
+              print(f'Terminal: {info.name}')
+              print(f'Build: {info.build}')
+              print(f'Server: {info.connected}')
+              mt5.shutdown()
+          else:
+              code, msg = mt5.last_error()
+              print(f'Connection FAILED: code={code}, msg={msg}')
+              exit(1)
+          "
+
+      # --- RDP Debug (Cloudflare Tunnel) ---
+      - name: Enable Remote Desktop
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Write-Host "Remote Desktop enabled."
+
+      - name: Create RDP user
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          $password = "KlineDebug2026!"
+          net user debuguser $password /add /y
+          net localgroup administrators debuguser /add
+          Write-Host "============================================"
+          Write-Host "RDP Username: debuguser"
+          Write-Host "RDP Password: $password"
+          Write-Host "============================================"
+
+      - name: Download cloudflared
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\cloudflared.exe" -TimeoutSec 60
+          Write-Host "cloudflared downloaded."
+
+      - name: Start Cloudflare Tunnel
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          Write-Host ""
+          Write-Host "========================================================"
+          Write-Host " CLOUDFLARE TUNNEL STARTING"
+          Write-Host "========================================================"
+          Write-Host ""
+          Write-Host " After the tunnel URL appears below, connect from your"
+          Write-Host " local machine using these steps:"
+          Write-Host ""
+          Write-Host " 1. Install cloudflared (if not already installed):"
+          Write-Host "    winget install cloudflare.cloudflared"
+          Write-Host ""
+          Write-Host " 2. Run this command (replace URL with the one below):"
+          Write-Host "    cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:3389"
+          Write-Host ""
+          Write-Host " 3. Open Remote Desktop Connection (mstsc.exe):"
+          Write-Host "    Connect to: localhost:3389"
+          Write-Host "    Username:   debuguser"
+          Write-Host "    Password:   KlineDebug2026!"
+          Write-Host ""
+          Write-Host "========================================================"
+          Write-Host ""
+          Write-Host "Starting tunnel now..."
+          Write-Host ""
+
+          # Start cloudflared in background, output includes the tunnel URL
+          Start-Process -FilePath "$env:TEMP\cloudflared.exe" `
+            -ArgumentList "tunnel --url rdp://localhost:3389" `
+            -NoNewWindow -RedirectStandardError "$env:TEMP\cloudflared.log"
+
+          # Wait for tunnel URL to appear in log
+          $timeout = 30
+          $elapsed = 0
+          while ($elapsed -lt $timeout) {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            if (Test-Path "$env:TEMP\cloudflared.log") {
+              $log = Get-Content "$env:TEMP\cloudflared.log" -Raw
+              if ($log -match "(https://[a-z0-9\-]+\.trycloudflare\.com)") {
+                Write-Host ""
+                Write-Host "========================================================"
+                Write-Host " TUNNEL URL: $($Matches[1])"
+                Write-Host "========================================================"
+                Write-Host ""
+                Write-Host " Run on your local machine:"
+                Write-Host "   cloudflared access rdp --hostname $($Matches[1]) --url localhost:3389"
+                Write-Host ""
+                Write-Host " Then connect RDP to localhost:3389"
+                Write-Host "========================================================"
+                break
+              }
+            }
+          }
+
+          if ($elapsed -ge $timeout) {
+            Write-Host "::warning::Tunnel URL not detected within ${timeout}s. Check log:"
+            if (Test-Path "$env:TEMP\cloudflared.log") {
+              Get-Content "$env:TEMP\cloudflared.log"
+            }
+          }
+
+      - name: Keep alive for RDP debugging
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          $minutes = [int]"${{ inputs.debug_timeout_minutes }}"
+          Write-Host "Keeping runner alive for $minutes minutes for RDP debugging..."
+          Write-Host "Workflow will terminate after this timeout."
+          Start-Sleep -Seconds ($minutes * 60)
+          Write-Host "Debug timeout reached. Shutting down."
