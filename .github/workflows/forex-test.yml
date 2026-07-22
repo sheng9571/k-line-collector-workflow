@@ -20,6 +20,95 @@ jobs:
       - name: Install Python dependencies
         run: pip install MetaTrader5 pyarrow huggingface_hub pyyaml numpy
 
+      - name: Start desktop screenshots
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $screenshotDir = Join-Path $env:RUNNER_TEMP "desktop-screenshots"
+          New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
+
+          $scriptPath = Join-Path $env:RUNNER_TEMP "capture-desktop.ps1"
+          $pidPath = Join-Path $env:RUNNER_TEMP "capture-desktop.pid"
+
+          @'
+          param(
+            [Parameter(Mandatory = $true)]
+            [string]$OutputDirectory
+          )
+
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+
+          New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+
+          $index = 0
+
+          while ($index -lt 180) {
+            try {
+              $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+              $filename = "{0:D5}-{1}.png" -f $index, $timestamp
+              $outputPath = Join-Path $OutputDirectory $filename
+
+              $screens = [System.Windows.Forms.Screen]::AllScreens
+
+              $left = ($screens | ForEach-Object { $_.Bounds.Left } | Measure-Object -Minimum).Minimum
+              $top = ($screens | ForEach-Object { $_.Bounds.Top } | Measure-Object -Minimum).Minimum
+              $right = ($screens | ForEach-Object { $_.Bounds.Right } | Measure-Object -Maximum).Maximum
+              $bottom = ($screens | ForEach-Object { $_.Bounds.Bottom } | Measure-Object -Maximum).Maximum
+
+              $width = $right - $left
+              $height = $bottom - $top
+
+              $bitmap = New-Object System.Drawing.Bitmap $width, $height
+              $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+
+              try {
+                $graphics.CopyFromScreen(
+                  $left, $top, 0, 0,
+                  [System.Drawing.Size]::new($width, $height)
+                )
+                $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
+              }
+              finally {
+                $graphics.Dispose()
+                $bitmap.Dispose()
+              }
+            }
+            catch {
+              Write-Error "Screenshot failed: $($_.Exception.Message)"
+            }
+
+            $index++
+            Start-Sleep -Seconds 2
+          }
+          '@ | Set-Content -Path $scriptPath -Encoding UTF8
+
+          $process = Start-Process `
+            -FilePath "pwsh.exe" `
+            -ArgumentList @(
+              "-NoLogo",
+              "-NoProfile",
+              "-ExecutionPolicy", "Bypass",
+              "-File", "`"$scriptPath`"",
+              "-OutputDirectory", "`"$screenshotDir`""
+            ) `
+            -WindowStyle Hidden `
+            -PassThru
+
+          $process.Id | Set-Content -Path $pidPath -Encoding ASCII
+
+          "SCREENSHOT_DIR=$screenshotDir" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          "SCREENSHOT_PID_FILE=$pidPath" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "Screenshot capture started."
+          Write-Host "PID: $($process.Id)"
+          Write-Host "Directory: $screenshotDir"
+          Write-Host "Max frames: 180 (about 6 minutes)"
+
       - name: Download MT5 installer
         shell: pwsh
         run: |
@@ -373,3 +462,52 @@ jobs:
 
             exit $pythonExitCode
           }
+
+      - name: Stop desktop screenshots
+        if: always()
+        shell: pwsh
+        run: |
+          if (
+            $env:SCREENSHOT_PID_FILE -and
+            (Test-Path $env:SCREENSHOT_PID_FILE)
+          ) {
+            $capturePid = Get-Content $env:SCREENSHOT_PID_FILE |
+              Select-Object -First 1
+
+            if ($capturePid) {
+              Write-Host "Stopping screenshot process PID: $capturePid"
+              Stop-Process `
+                -Id ([int]$capturePid) `
+                -Force `
+                -ErrorAction SilentlyContinue
+            }
+          }
+
+          Start-Sleep -Seconds 2
+
+          if (
+            $env:SCREENSHOT_DIR -and
+            (Test-Path $env:SCREENSHOT_DIR)
+          ) {
+            $files = Get-ChildItem `
+              -Path $env:SCREENSHOT_DIR `
+              -Filter "*.png" `
+              -File `
+              -ErrorAction SilentlyContinue
+
+            Write-Host "Captured screenshots: $($files.Count)"
+
+            $files |
+              Sort-Object Name |
+              Select-Object -First 5 |
+              Format-Table Name, Length, LastWriteTime
+          }
+
+      - name: Upload desktop screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-desktop-screenshots
+          path: ${{ runner.temp }}/desktop-screenshots
+          if-no-files-found: warn
+          retention-days: 3
