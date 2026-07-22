@@ -23,63 +23,32 @@ jobs:
 
     steps:
       # --- RustDesk Remote Access (first, so you can observe everything) ---
-      - name: Install RustDesk
+      - name: Download RustDesk portable
         if: inputs.debug_remote == 'rustdesk'
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Get latest RustDesk release URL
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
-          $asset = $release.assets | Where-Object { $_.name -match "rustdesk-.*-x86_64\.exe" -and $_.name -notmatch "portable" } | Select-Object -First 1
+          $asset = $release.assets | Where-Object { $_.name -match "portable.*x86_64\.exe" } | Select-Object -First 1
           $downloadUrl = $asset.browser_download_url
           $version = $release.tag_name
 
-          Write-Host "Downloading RustDesk $version..."
+          Write-Host "Downloading RustDesk portable $version..."
           Invoke-WebRequest -Uri $downloadUrl -OutFile "$env:TEMP\rustdesk.exe" -TimeoutSec 120
           Write-Host "Download complete."
 
-          # Silent install
-          Write-Host "Installing RustDesk silently..."
-          Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "--silent-install" -Wait
-          Start-Sleep -Seconds 20
-
-          # Verify service is running
-          $svc = Get-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-          if ($svc -eq $null) {
-            Write-Host "Installing RustDesk service..."
-            Start-Process "$env:ProgramFiles\RustDesk\rustdesk.exe" -ArgumentList "--install-service" -Wait
-            Start-Sleep -Seconds 10
-          }
-
-          # Ensure service is running
-          $timeout = 30
-          $elapsed = 0
-          while ($elapsed -lt $timeout) {
-            $svc = Get-Service -Name "RustDesk" -ErrorAction SilentlyContinue
-            if ($svc -and $svc.Status -eq 'Running') {
-              Write-Host "RustDesk service is running."
-              break
-            }
-            Start-Service "RustDesk" -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 5
-            $elapsed += 5
-          }
-
-      - name: Configure RustDesk and show connection info
+      - name: Start RustDesk and show connection info
         if: inputs.debug_remote == 'rustdesk'
         run: |
-          $ErrorActionPreference = 'Stop'
-          cd "$env:ProgramFiles\RustDesk"
-
           # Generate random password
           $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
 
-          # Set password
-          .\rustdesk.exe --password $password
-          Start-Sleep -Seconds 3
+          # Start RustDesk portable
+          Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "--password $password"
+          Start-Sleep -Seconds 10
 
           # Get ID
-          $id = (.\rustdesk.exe --get-id 2>&1) | Out-String
+          $id = (& "$env:TEMP\rustdesk.exe" --get-id 2>&1) | Out-String
           $id = $id.Trim()
 
           Write-Host ""
