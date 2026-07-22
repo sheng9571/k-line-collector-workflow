@@ -1,18 +1,18 @@
-name: Forex Test (MT5 + RDP)
+name: Forex Test (MT5 + RustDesk)
 
 on:
   workflow_dispatch:
     inputs:
-      debug_rdp:
-        description: 'RDP debug mode: none, cloudflare'
+      debug_remote:
+        description: 'Remote desktop: none, rustdesk'
         required: false
         default: 'none'
         type: choice
         options:
           - none
-          - cloudflare
+          - rustdesk
       debug_timeout_minutes:
-        description: 'Minutes to keep runner alive after MT5 steps (only when debug_rdp=cloudflare)'
+        description: 'Minutes to keep runner alive for remote access'
         required: false
         default: '30'
 
@@ -22,91 +22,85 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # --- RDP Debug (background tunnel, stays alive until job ends) ---
-      - name: Enable Remote Desktop
-        if: inputs.debug_rdp == 'cloudflare'
+      # --- RustDesk Remote Access (first, so you can observe everything) ---
+      - name: Install RustDesk
+        if: inputs.debug_remote == 'rustdesk'
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
-          Write-Host "Remote Desktop enabled."
+          $ErrorActionPreference = 'Stop'
 
-      - name: Set RDP password
-        if: inputs.debug_rdp == 'cloudflare'
-        run: |
-          $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 14 | ForEach-Object { [char]$_ }) + "A1"
-          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText $password -Force)
+          # Get latest RustDesk release URL
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
+          $asset = $release.assets | Where-Object { $_.name -match "rustdesk-.*-x86_64\.exe" -and $_.name -notmatch "portable" } | Select-Object -First 1
+          $downloadUrl = $asset.browser_download_url
+          $version = $release.tag_name
 
-          echo "RDP_USER=runneradmin" >> $env:GITHUB_ENV
-          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+          Write-Host "Downloading RustDesk $version..."
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "$env:TEMP\rustdesk.exe" -TimeoutSec 120
+          Write-Host "Download complete."
 
-      - name: Download cloudflared
-        if: inputs.debug_rdp == 'cloudflare'
-        run: |
-          $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\cloudflared.exe" -TimeoutSec 60
-          Write-Host "cloudflared downloaded."
+          # Silent install
+          Write-Host "Installing RustDesk silently..."
+          Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "--silent-install" -Wait
+          Start-Sleep -Seconds 20
 
-      - name: Start Cloudflare Tunnel (background)
-        if: inputs.debug_rdp == 'cloudflare'
-        run: |
-          # Start tunnel as background process - stays alive until job ends
-          Start-Process -FilePath "$env:TEMP\cloudflared.exe" `
-            -ArgumentList "tunnel --url tcp://localhost:3389" `
-            -NoNewWindow -RedirectStandardError "$env:TEMP\cloudflared.log"
+          # Verify service is running
+          $svc = Get-Service -Name "RustDesk" -ErrorAction SilentlyContinue
+          if ($svc -eq $null) {
+            Write-Host "Installing RustDesk service..."
+            Start-Process "$env:ProgramFiles\RustDesk\rustdesk.exe" -ArgumentList "--install-service" -Wait
+            Start-Sleep -Seconds 10
+          }
 
-          # Wait for tunnel URL
+          # Ensure service is running
           $timeout = 30
           $elapsed = 0
-          $tunnelUrl = ""
           while ($elapsed -lt $timeout) {
-            Start-Sleep -Seconds 3
-            $elapsed += 3
-            if (Test-Path "$env:TEMP\cloudflared.log") {
-              $log = Get-Content "$env:TEMP\cloudflared.log" -Raw
-              if ($log -and ($log -match "(https://[a-z0-9\-]+\.trycloudflare\.com)")) {
-                $tunnelUrl = $Matches[1]
-                break
-              }
+            $svc = Get-Service -Name "RustDesk" -ErrorAction SilentlyContinue
+            if ($svc -and $svc.Status -eq 'Running') {
+              Write-Host "RustDesk service is running."
+              break
             }
+            Start-Service "RustDesk" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5
+            $elapsed += 5
           }
+
+      - name: Configure RustDesk and show connection info
+        if: inputs.debug_remote == 'rustdesk'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cd "$env:ProgramFiles\RustDesk"
+
+          # Generate random password
+          $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
+
+          # Set password
+          .\rustdesk.exe --password $password
+          Start-Sleep -Seconds 3
+
+          # Get ID
+          $id = (.\rustdesk.exe --get-id 2>&1) | Out-String
+          $id = $id.Trim()
 
           Write-Host ""
           Write-Host "========================================================"
-          Write-Host " RDP CONNECTION INFO"
+          Write-Host " RUSTDESK CONNECTION INFO"
           Write-Host "========================================================"
           Write-Host ""
-          if ($tunnelUrl) {
-            Write-Host " Tunnel URL: $tunnelUrl"
-          } else {
-            Write-Host " WARNING: Tunnel URL not detected within ${timeout}s"
-          }
+          Write-Host " RustDesk ID: $id"
+          Write-Host " Password:    $password"
           Write-Host ""
-          Write-Host " Username: $env:RDP_USER"
-          Write-Host " Password: $env:RDP_PASS"
+          Write-Host "========================================================"
+          Write-Host " HOW TO CONNECT:"
           Write-Host ""
-          Write-Host " CLIENT SETUP (one-time):"
-          Write-Host "   winget install cloudflare.cloudflared"
-          Write-Host ""
-          Write-Host " CONNECT:"
-          if ($tunnelUrl) {
-            Write-Host "   cloudflared access tcp --hostname $tunnelUrl --url localhost:30678"
-          } else {
-            Write-Host "   cloudflared access tcp --hostname <TUNNEL_URL> --url localhost:30678"
-          }
-          Write-Host ""
-          Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:30678"
+          Write-Host " 1. Download RustDesk: https://rustdesk.com/download"
+          Write-Host " 2. Open RustDesk on your local machine"
+          Write-Host " 3. Enter the ID above in the connection field"
+          Write-Host " 4. Enter the password when prompted"
           Write-Host "========================================================"
           Write-Host ""
-          Write-Host " Tunnel is running in background. You can connect at any"
-          Write-Host " time while the workflow is still running."
+          Write-Host " Remote access will remain active until the workflow ends."
           Write-Host "========================================================"
-
-          if (-not $tunnelUrl -and (Test-Path "$env:TEMP\cloudflared.log")) {
-            Write-Host ""
-            Write-Host "--- cloudflared log ---"
-            Get-Content "$env:TEMP\cloudflared.log"
-          }
 
       # --- Setup environment ---
       - name: Clone collector repo
@@ -183,16 +177,16 @@ jobs:
               exit(1)
           "
 
-      # --- Keep alive for RDP debugging (after all steps complete) ---
-      - name: Keep alive for RDP debugging
-        if: always() && inputs.debug_rdp == 'cloudflare'
+      # --- Keep alive for remote debugging ---
+      - name: Keep alive for remote debugging
+        if: always() && inputs.debug_remote == 'rustdesk'
         run: |
           $minutes = [int]"${{ inputs.debug_timeout_minutes }}"
           Write-Host ""
           Write-Host "========================================================"
-          Write-Host " ALL STEPS COMPLETE - KEEPING ALIVE FOR RDP DEBUG"
+          Write-Host " ALL STEPS COMPLETE - KEEPING ALIVE FOR REMOTE DEBUG"
           Write-Host " Runner will shut down in $minutes minutes."
-          Write-Host " RDP tunnel is still active. Connect now if needed."
+          Write-Host " RustDesk is still active. Connect now if needed."
           Write-Host "========================================================"
           Start-Sleep -Seconds ($minutes * 60)
           Write-Host "Debug timeout reached. Shutting down."
