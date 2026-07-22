@@ -54,7 +54,7 @@ jobs:
         run: |
           # Start tunnel as background process - stays alive until job ends
           Start-Process -FilePath "$env:TEMP\cloudflared.exe" `
-            -ArgumentList "tunnel --url rdp://localhost:3389" `
+            -ArgumentList "tunnel --url tcp://localhost:3389" `
             -NoNewWindow -RedirectStandardError "$env:TEMP\cloudflared.log"
 
           # Wait for tunnel URL
@@ -92,9 +92,9 @@ jobs:
           Write-Host ""
           Write-Host " CONNECT:"
           if ($tunnelUrl) {
-            Write-Host "   cloudflared access rdp --hostname $tunnelUrl --url localhost:30678"
+            Write-Host "   cloudflared access tcp --hostname $tunnelUrl --url localhost:30678"
           } else {
-            Write-Host "   cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:30678"
+            Write-Host "   cloudflared access tcp --hostname <TUNNEL_URL> --url localhost:30678"
           }
           Write-Host ""
           Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:30678"
