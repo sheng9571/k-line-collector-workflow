@@ -23,18 +23,23 @@ jobs:
 
     steps:
       # --- RustDesk Remote Access (first, so you can observe everything) ---
-      - name: Download RustDesk portable
+      - name: Download RustDesk
         if: inputs.debug_remote == 'rustdesk'
         run: |
           $ErrorActionPreference = 'Stop'
 
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
-          $asset = $release.assets | Where-Object { $_.name -match "portable.*x86_64\.exe" } | Select-Object -First 1
-          $downloadUrl = $asset.browser_download_url
           $version = $release.tag_name
+          $asset = $release.assets | Where-Object { $_.name -match "^rustdesk-.*-x86_64\.exe$" } | Select-Object -First 1
 
-          Write-Host "Downloading RustDesk portable $version..."
-          Invoke-WebRequest -Uri $downloadUrl -OutFile "$env:TEMP\rustdesk.exe" -TimeoutSec 120
+          if (-not $asset) {
+            Write-Host "::error::Could not find RustDesk x86_64 exe in release $version"
+            $release.assets | ForEach-Object { Write-Host "  - $($_.name)" }
+            exit 1
+          }
+
+          Write-Host "Downloading: $($asset.name) ($version)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "$env:TEMP\rustdesk.exe" -TimeoutSec 120
           Write-Host "Download complete."
 
       - name: Start RustDesk and show connection info
@@ -43,9 +48,13 @@ jobs:
           # Generate random password
           $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
 
-          # Start RustDesk portable
-          Start-Process "$env:TEMP\rustdesk.exe" -ArgumentList "--password $password"
-          Start-Sleep -Seconds 10
+          # Start RustDesk in portable mode (no install)
+          Start-Process "$env:TEMP\rustdesk.exe"
+          Start-Sleep -Seconds 15
+
+          # Set password
+          & "$env:TEMP\rustdesk.exe" --password $password
+          Start-Sleep -Seconds 3
 
           # Get ID
           $id = (& "$env:TEMP\rustdesk.exe" --get-id 2>&1) | Out-String
@@ -68,8 +77,6 @@ jobs:
           Write-Host " 4. Enter the password when prompted"
           Write-Host "========================================================"
           Write-Host ""
-          Write-Host " Remote access will remain active until the workflow ends."
-          Write-Host "========================================================"
 
       # --- Setup environment ---
       - name: Clone collector repo
