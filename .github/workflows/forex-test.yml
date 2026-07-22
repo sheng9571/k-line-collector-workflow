@@ -27,21 +27,17 @@ jobs:
         if: inputs.debug_rdp == 'cloudflare'
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Restart-Service TermService -Force
-          Write-Host "Remote Desktop enabled (NLA disabled, service restarted)."
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+          Write-Host "Remote Desktop enabled."
 
-      - name: Create RDP user
+      - name: Set RDP password
         if: inputs.debug_rdp == 'cloudflare'
         run: |
-          $username = "dbg" + -join ((48..57) + (97..122) | Get-Random -Count 5 | ForEach-Object { [char]$_ })
-          $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
+          $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 14 | ForEach-Object { [char]$_ }) + "A1"
+          Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText $password -Force)
 
-          net user $username "$password" /add /y
-          net localgroup administrators $username /add
-
-          echo "RDP_USER=$username" >> $env:GITHUB_ENV
+          echo "RDP_USER=runneradmin" >> $env:GITHUB_ENV
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
       - name: Download cloudflared
