@@ -27,8 +27,9 @@ jobs:
         if: inputs.debug_rdp == 'cloudflare'
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Write-Host "Remote Desktop enabled."
+          Write-Host "Remote Desktop enabled (NLA disabled)."
 
       - name: Create RDP user
         if: inputs.debug_rdp == 'cloudflare'
