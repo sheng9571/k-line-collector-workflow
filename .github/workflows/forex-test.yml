@@ -47,7 +47,8 @@ jobs:
 
           $installer = "$env:TEMP\mt5setup.exe"
 
-          Write-Host "Installing MT5 Terminal..."
+          Write-Host "Installer:"
+          Get-Item $installer | Format-List FullName, Length, LastWriteTime
 
           $process = Start-Process `
             -FilePath $installer `
@@ -108,7 +109,7 @@ jobs:
             throw "MT5 installation failed with exit code $exitCode."
           }
 
-      - name: Start MT5 Terminal
+      - name: Prepare portable MT5
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -117,34 +118,58 @@ jobs:
             throw "MT5_PATH is missing or invalid: $env:MT5_PATH"
           }
 
-          Write-Host "Starting: $env:MT5_PATH"
+          # Stop anything launched by the installer
+          Get-Process terminal64 -ErrorAction SilentlyContinue |
+            Stop-Process -Force -ErrorAction SilentlyContinue
 
-          $process = Start-Process `
-            -FilePath $env:MT5_PATH `
-            -PassThru
+          Start-Sleep -Seconds 3
 
-          Write-Host "Initial PID: $($process.Id)"
+          $sourceDir = Split-Path $env:MT5_PATH -Parent
+          $portableDir = Join-Path $env:RUNNER_TEMP "mt5-portable"
+          $portableExe = Join-Path $portableDir "terminal64.exe"
 
-          for ($i = 1; $i -le 18; $i++) {
-            $terminal = Get-Process terminal64 -ErrorAction SilentlyContinue |
-              Select-Object -First 1
-
-            if ($terminal) {
-              Write-Host "MT5 is running:"
-              $terminal | Format-List Id, SessionId, Path, StartTime
-              exit 0
-            }
-
-            if ($process.HasExited) {
-              Write-Host "::warning::Initial MT5 process exited with code $($process.ExitCode)"
-            }
-
-            Start-Sleep -Seconds 5
+          if (Test-Path $portableDir) {
+            Remove-Item $portableDir -Recurse -Force
           }
 
-          throw "terminal64.exe did not stay running."
+          Write-Host "Copying MT5 from:"
+          Write-Host "  $sourceDir"
+          Write-Host "to:"
+          Write-Host "  $portableDir"
 
-      - name: Test MT5 connection
+          New-Item -ItemType Directory -Path $portableDir -Force |
+            Out-Null
+
+          Copy-Item `
+            -Path "$sourceDir\*" `
+            -Destination $portableDir `
+            -Recurse `
+            -Force
+
+          if (-not (Test-Path $portableExe)) {
+            throw "Portable terminal was not created: $portableExe"
+          }
+
+          # Enables portable data-directory behavior for MT5
+          New-Item `
+            -ItemType File `
+            -Path (Join-Path $portableDir "portable") `
+            -Force |
+            Out-Null
+
+          "MT5_PATH=$portableExe" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          "MT5_DATA_DIR=$portableDir" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "Portable MT5 prepared:"
+          Write-Host "  $portableExe"
+
+          Get-Item $portableExe |
+            Format-List FullName, Length, LastWriteTime
+
+      - name: Test MT5 IPC, login and K-line access
         shell: pwsh
         env:
           MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
@@ -154,56 +179,197 @@ jobs:
           @'
           import os
           import sys
+          import time
+          from pathlib import Path
+
           import MetaTrader5 as mt5
 
+
+          terminal_path = Path(os.environ["MT5_PATH"])
           login = int(os.environ["MT5_LOGIN"])
           password = os.environ["MT5_PASSWORD"]
           server = os.environ["MT5_SERVER"]
-          terminal_path = os.environ["MT5_PATH"]
 
+          print(f"MetaTrader5 Python package: {mt5.__version__}")
           print(f"Terminal path: {terminal_path}")
-          print(f"Connecting to {server} with login {login}...")
+          print(f"Terminal exists: {terminal_path.exists()}")
+          print(f"Server: {server}")
+          print(f"Login: {login}")
 
-          result = mt5.initialize(
-              path=terminal_path,
-              login=login,
-              password=password,
-              server=server,
-              timeout=60000,
-          )
+          if not terminal_path.exists():
+              raise FileNotFoundError(terminal_path)
 
-          if not result:
-              code, message = mt5.last_error()
-              print(f"MT5 initialize failed: code={code}, message={message}")
+          # First establish IPC only. Do not combine IPC startup and account login,
+          # because that makes diagnosis harder.
+          initialized = False
+
+          for attempt in range(1, 4):
+              print(f"IPC initialization attempt {attempt}/3...")
+
+              mt5.shutdown()
+
+              initialized = mt5.initialize(
+                  path=str(terminal_path),
+                  timeout=120_000,
+                  portable=True,
+              )
+
+              if initialized:
+                  print("IPC initialization succeeded.")
+                  break
+
+              print(f"IPC initialization failed: {mt5.last_error()}")
+
+              # Kill the failed Terminal instance before another attempt
+              os.system(
+                  'taskkill /F /IM terminal64.exe >NUL 2>&1'
+              )
+              time.sleep(10)
+
+          if not initialized:
+              print(f"Final IPC error: {mt5.last_error()}")
               sys.exit(1)
 
           try:
               terminal_info = mt5.terminal_info()
+
+              if terminal_info is None:
+                  raise RuntimeError(
+                      f"terminal_info failed: {mt5.last_error()}"
+                  )
+
+              print("Terminal IPC information:")
+              print(f"  name: {terminal_info.name}")
+              print(f"  build: {terminal_info.build}")
+              print(f"  path: {terminal_info.path}")
+              print(f"  data_path: {terminal_info.data_path}")
+              print(f"  connected: {terminal_info.connected}")
+
+              print("Logging into trading account...")
+
+              if not mt5.login(
+                  login=login,
+                  password=password,
+                  server=server,
+                  timeout=60_000,
+              ):
+                  raise RuntimeError(
+                      f"MT5 login failed: {mt5.last_error()}"
+                  )
+
               account_info = mt5.account_info()
 
-              print("Connected successfully.")
-              print(f"Terminal connected: {terminal_info.connected}")
-              print(f"Terminal build: {terminal_info.build}")
-              print(f"Account login: {account_info.login}")
-              print(f"Account server: {account_info.server}")
+              if account_info is None:
+                  raise RuntimeError(
+                      f"account_info failed: {mt5.last_error()}"
+                  )
+
+              print("Account login succeeded:")
+              print(f"  login: {account_info.login}")
+              print(f"  server: {account_info.server}")
+              print(f"  company: {account_info.company}")
+
+              # EURUSD may have a broker-specific suffix
+              symbols = mt5.symbols_get()
+
+              if symbols is None:
+                  raise RuntimeError(
+                      f"symbols_get failed: {mt5.last_error()}"
+                  )
+
+              symbol_names = [item.name for item in symbols]
+
+              symbol = next(
+                  (
+                      name
+                      for name in symbol_names
+                      if name.upper() == "EURUSD"
+                  ),
+                  None,
+              )
+
+              if symbol is None:
+                  symbol = next(
+                      (
+                          name
+                          for name in symbol_names
+                          if name.upper().startswith("EURUSD")
+                      ),
+                      None,
+                  )
+
+              if symbol is None:
+                  sample = symbol_names[:30]
+                  raise RuntimeError(
+                      "Could not find an EURUSD-compatible symbol. "
+                      f"First available symbols: {sample}"
+                  )
+
+              print(f"Using symbol: {symbol}")
+
+              if not mt5.symbol_select(symbol, True):
+                  raise RuntimeError(
+                      f"symbol_select failed: {mt5.last_error()}"
+                  )
 
               rates = mt5.copy_rates_from_pos(
-                  "EURUSD",
+                  symbol,
                   mt5.TIMEFRAME_M1,
                   0,
                   10,
               )
 
               if rates is None:
-                  code, message = mt5.last_error()
                   raise RuntimeError(
-                      f"copy_rates_from_pos failed: code={code}, message={message}"
+                      f"copy_rates_from_pos failed: {mt5.last_error()}"
                   )
 
-              print(f"Received {len(rates)} EURUSD M1 bars.")
+              print(f"Received {len(rates)} bars.")
+
+              for rate in rates[-3:]:
+                  print(
+                      f"time={rate['time']} "
+                      f"open={rate['open']} "
+                      f"high={rate['high']} "
+                      f"low={rate['low']} "
+                      f"close={rate['close']}"
+                  )
 
           finally:
               mt5.shutdown()
-          '@ | Set-Content -Path "$env:TEMP\test_mt5.py" -Encoding UTF8
+          '@ | Set-Content `
+            -Path "$env:RUNNER_TEMP\test_mt5.py" `
+            -Encoding UTF8
 
-          python "$env:TEMP\test_mt5.py"
+          python "$env:RUNNER_TEMP\test_mt5.py"
+
+          $pythonExitCode = $LASTEXITCODE
+
+          if ($pythonExitCode -ne 0) {
+            Write-Host ""
+            Write-Host "========== MT5 process diagnostics =========="
+
+            Get-Process terminal64 -ErrorAction SilentlyContinue |
+              Format-List Id, SessionId, Path, StartTime, Responding
+
+            Write-Host ""
+            Write-Host "========== MT5 log files =========="
+
+            $logFiles = Get-ChildItem `
+              -Path $env:MT5_DATA_DIR `
+              -Filter "*.log" `
+              -File `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 10
+
+            foreach ($log in $logFiles) {
+              Write-Host ""
+              Write-Host "----- $($log.FullName) -----"
+              Get-Content $log.FullName -Tail 100 `
+                -ErrorAction SilentlyContinue
+            }
+
+            exit $pythonExitCode
+          }
