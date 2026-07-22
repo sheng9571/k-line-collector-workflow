@@ -23,11 +23,22 @@ jobs:
       - name: Download MT5 installer
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+
           $url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
           $output = "$env:TEMP\mt5setup.exe"
+
           Write-Host "Downloading MT5 installer..."
           Invoke-WebRequest -Uri $url -OutFile $output -TimeoutSec 120
-          Write-Host "Download complete: $output"
+
+          # Verify downloaded file is a valid PE executable
+          $bytes = [System.IO.File]::ReadAllBytes($output)
+          if ($bytes.Length -lt 2 -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+            throw "Downloaded file is not a valid Windows executable."
+          }
+
+          Get-Item $output | Format-List FullName, Length, LastWriteTime
+          Get-FileHash $output -Algorithm SHA256
 
       - name: Install MT5 Terminal
         shell: pwsh
@@ -43,107 +54,95 @@ jobs:
             -ArgumentList "/auto" `
             -PassThru
 
-          $timeoutSeconds = 300
-
-          if (-not $process.WaitForExit($timeoutSeconds * 1000)) {
+          if (-not $process.WaitForExit(300000)) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-            throw "MT5 installer did not finish within $timeoutSeconds seconds."
+            throw "MT5 installer timed out after 300 seconds."
           }
 
-          Write-Host "Installer exit code: $($process.ExitCode)"
+          $exitCode = $process.ExitCode
+          Write-Host "Installer exit code: $exitCode"
 
-          if ($process.ExitCode -ne 0) {
-            throw "MT5 installer failed with exit code $($process.ExitCode)."
-          }
+          # Give child processes/filesystem a moment to settle
+          Start-Sleep -Seconds 10
 
-      - name: Locate and start MT5 Terminal
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          Write-Host "Searching for terminal64.exe..."
-
-          $terminal = $null
-
-          # Check common paths first
-          $commonPaths = @(
+          # Search for terminal64.exe
+          $candidatePaths = @(
             "$env:ProgramFiles\MetaTrader 5\terminal64.exe",
             "$env:LOCALAPPDATA\Programs\MetaTrader 5\terminal64.exe"
           )
 
-          foreach ($path in $commonPaths) {
-            if (Test-Path $path) {
-              $terminal = Get-Item $path
-              break
-            }
-          }
-
-          # Fallback: search Program Files and LOCALAPPDATA
-          if (-not $terminal) {
-            $searchRoots = @(
-              "$env:ProgramFiles",
-              "${env:ProgramFiles(x86)}",
-              "$env:LOCALAPPDATA\Programs",
-              "C:\"
-            ) | Where-Object { $_ -and (Test-Path $_) }
-
-            foreach ($root in $searchRoots) {
-              Write-Host "Searching under: $root"
-
-              $terminal = Get-ChildItem `
-                -Path $root `
-                -Filter "terminal64.exe" `
-                -File `
-                -Recurse `
-                -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-
-              if ($terminal) {
-                break
-              }
-            }
-          }
+          $terminal = $candidatePaths |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
 
           if (-not $terminal) {
-            Write-Host ""
-            Write-Host "Installed directories under Program Files:"
-            Get-ChildItem "$env:ProgramFiles" -Directory -ErrorAction SilentlyContinue |
-              Select-Object FullName
-            throw "MT5 installation finished, but terminal64.exe was not found."
+            $terminal = Get-ChildItem `
+              -Path $env:ProgramFiles, "$env:LOCALAPPDATA\Programs" `
+              -Filter terminal64.exe `
+              -File `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName -First 1
           }
 
-          $terminalPath = $terminal.FullName
-          Write-Host "MT5 terminal found: $terminalPath"
+          if ($terminal) {
+            Write-Host "MT5 was installed successfully:"
+            Write-Host $terminal
 
-          # Save path for subsequent steps
-          "MT5_PATH=$terminalPath" |
-            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            "MT5_PATH=$terminal" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-          # Explicitly start MT5
-          $proc = Start-Process -FilePath $terminalPath -PassThru
-          Write-Host "Started MT5, initial PID: $($proc.Id)"
+            if ($exitCode -ne 0) {
+              Write-Host "::warning::Installer returned $exitCode, but terminal64.exe exists; continuing."
+            }
+          }
+          else {
+            Write-Host "::error::terminal64.exe was not found."
+            Write-Host "Processes still related to setup:"
+            Get-Process |
+              Where-Object {
+                $_.ProcessName -match 'mt5|meta|setup|terminal'
+              } |
+              Format-Table Id, ProcessName, SessionId, Path -AutoSize
 
-          # Wait up to 90 seconds for process to be running
-          $running = $null
+            throw "MT5 installation failed with exit code $exitCode."
+          }
+
+      - name: Start MT5 Terminal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (-not $env:MT5_PATH -or -not (Test-Path $env:MT5_PATH)) {
+            throw "MT5_PATH is missing or invalid: $env:MT5_PATH"
+          }
+
+          Write-Host "Starting: $env:MT5_PATH"
+
+          $process = Start-Process `
+            -FilePath $env:MT5_PATH `
+            -PassThru
+
+          Write-Host "Initial PID: $($process.Id)"
+
           for ($i = 1; $i -le 18; $i++) {
-            $running = Get-Process -Name "terminal64" -ErrorAction SilentlyContinue |
+            $terminal = Get-Process terminal64 -ErrorAction SilentlyContinue |
               Select-Object -First 1
 
-            if ($running) {
-              Write-Host "MT5 Terminal is running."
-              Write-Host "PID: $($running.Id)"
-              Write-Host "Session: $($running.SessionId)"
-              Write-Host "Path: $($running.Path)"
-              break
+            if ($terminal) {
+              Write-Host "MT5 is running:"
+              $terminal | Format-List Id, SessionId, Path, StartTime
+              exit 0
             }
 
-            Write-Host "Waiting for MT5 Terminal... attempt $i/18"
+            if ($process.HasExited) {
+              Write-Host "::warning::Initial MT5 process exited with code $($process.ExitCode)"
+            }
+
             Start-Sleep -Seconds 5
           }
 
-          if (-not $running) {
-            throw "terminal64.exe was started but no running MT5 process was detected."
-          }
+          throw "terminal64.exe did not stay running."
 
       - name: Test MT5 connection
         shell: pwsh
