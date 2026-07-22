@@ -22,18 +22,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Clone collector repo
-        run: git clone --depth 1 https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install Python dependencies
-        run: pip install MetaTrader5 pyarrow huggingface_hub pyyaml numpy
-
-      # --- RDP Debug (Cloudflare Tunnel) - before MT5 install for debugging ---
+      # --- RDP Debug (first, so you can observe everything) ---
       - name: Enable Remote Desktop
         if: inputs.debug_rdp == 'cloudflare'
         run: |
@@ -115,6 +104,18 @@ jobs:
             Write-Host "--- cloudflared log ---"
             Get-Content "$env:TEMP\cloudflared.log"
           }
+
+      # --- Setup environment ---
+      - name: Clone collector repo
+        run: git clone --depth 1 https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install MetaTrader5 pyarrow huggingface_hub pyyaml numpy
 
       # --- MT5 Install and Test ---
       - name: Download MT5 installer
