@@ -33,6 +33,90 @@ jobs:
       - name: Install Python dependencies
         run: pip install MetaTrader5 pyarrow huggingface_hub pyyaml numpy
 
+      # --- RDP Debug (Cloudflare Tunnel) - before MT5 install for debugging ---
+      - name: Enable Remote Desktop
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Write-Host "Remote Desktop enabled."
+
+      - name: Create RDP user
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          $username = "dbg" + -join ((48..57) + (97..122) | Get-Random -Count 5 | ForEach-Object { [char]$_ })
+          $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
+
+          net user $username $password /add /y
+          net localgroup administrators $username /add
+
+          echo "RDP_USER=$username" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+
+      - name: Download cloudflared
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\cloudflared.exe" -TimeoutSec 60
+          Write-Host "cloudflared downloaded."
+
+      - name: Start Cloudflare Tunnel
+        if: inputs.debug_rdp == 'cloudflare'
+        run: |
+          Start-Process -FilePath "$env:TEMP\cloudflared.exe" `
+            -ArgumentList "tunnel --url rdp://localhost:3389" `
+            -NoNewWindow -RedirectStandardError "$env:TEMP\cloudflared.log"
+
+          $timeout = 30
+          $elapsed = 0
+          $tunnelUrl = ""
+          while ($elapsed -lt $timeout) {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            if (Test-Path "$env:TEMP\cloudflared.log") {
+              $log = Get-Content "$env:TEMP\cloudflared.log" -Raw
+              if ($log -match "(https://[a-z0-9\-]+\.trycloudflare\.com)") {
+                $tunnelUrl = $Matches[1]
+                break
+              }
+            }
+          }
+
+          Write-Host ""
+          Write-Host "========================================================"
+          Write-Host " RDP CONNECTION INFO"
+          Write-Host "========================================================"
+          Write-Host ""
+          if ($tunnelUrl) {
+            Write-Host " Tunnel URL: $tunnelUrl"
+          } else {
+            Write-Host " WARNING: Tunnel URL not detected within ${timeout}s"
+          }
+          Write-Host ""
+          Write-Host " Username: $env:RDP_USER"
+          Write-Host " Password: $env:RDP_PASS"
+          Write-Host ""
+          Write-Host "========================================================"
+          Write-Host " CLIENT SETUP (one-time):"
+          Write-Host "   winget install cloudflare.cloudflared"
+          Write-Host ""
+          Write-Host " CONNECT:"
+          if ($tunnelUrl) {
+            Write-Host "   cloudflared access rdp --hostname $tunnelUrl --url localhost:3389"
+          } else {
+            Write-Host "   cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:3389"
+          }
+          Write-Host ""
+          Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:3389"
+          Write-Host "========================================================"
+          Write-Host ""
+
+          if (-not $tunnelUrl -and (Test-Path "$env:TEMP\cloudflared.log")) {
+            Write-Host "--- cloudflared log ---"
+            Get-Content "$env:TEMP\cloudflared.log"
+          }
+
+      # --- MT5 Install and Test ---
       - name: Download MT5 installer
         run: |
           $url = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
@@ -95,95 +179,7 @@ jobs:
               exit(1)
           "
 
-      # --- RDP Debug (Cloudflare Tunnel) ---
-      - name: Enable Remote Desktop
-        if: inputs.debug_rdp == 'cloudflare'
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Write-Host "Remote Desktop enabled."
-
-      - name: Create RDP user
-        if: inputs.debug_rdp == 'cloudflare'
-        id: rdp-user
-        run: |
-          # Generate random username and password
-          $username = "dbg" + -join ((48..57) + (97..122) | Get-Random -Count 5 | ForEach-Object { [char]$_ })
-          $password = -join ((33..126) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
-
-          net user $username $password /add /y
-          net localgroup administrators $username /add
-
-          # Store for later steps
-          echo "RDP_USER=$username" >> $env:GITHUB_ENV
-          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
-
-      - name: Download cloudflared
-        if: inputs.debug_rdp == 'cloudflare'
-        run: |
-          $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-          Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\cloudflared.exe" -TimeoutSec 60
-          Write-Host "cloudflared downloaded."
-
-      - name: Start Cloudflare Tunnel
-        if: inputs.debug_rdp == 'cloudflare'
-        run: |
-          # Start cloudflared in background, output includes the tunnel URL
-          Start-Process -FilePath "$env:TEMP\cloudflared.exe" `
-            -ArgumentList "tunnel --url rdp://localhost:3389" `
-            -NoNewWindow -RedirectStandardError "$env:TEMP\cloudflared.log"
-
-          # Wait for tunnel URL to appear in log
-          $timeout = 30
-          $elapsed = 0
-          $tunnelUrl = ""
-          while ($elapsed -lt $timeout) {
-            Start-Sleep -Seconds 3
-            $elapsed += 3
-            if (Test-Path "$env:TEMP\cloudflared.log") {
-              $log = Get-Content "$env:TEMP\cloudflared.log" -Raw
-              if ($log -match "(https://[a-z0-9\-]+\.trycloudflare\.com)") {
-                $tunnelUrl = $Matches[1]
-                break
-              }
-            }
-          }
-
-          Write-Host ""
-          Write-Host "========================================================"
-          Write-Host " RDP CONNECTION INFO"
-          Write-Host "========================================================"
-          Write-Host ""
-          if ($tunnelUrl) {
-            Write-Host " Tunnel URL: $tunnelUrl"
-          } else {
-            Write-Host " WARNING: Tunnel URL not detected within ${timeout}s"
-            Write-Host " Check cloudflared log below."
-          }
-          Write-Host ""
-          Write-Host " Username: $env:RDP_USER"
-          Write-Host " Password: $env:RDP_PASS"
-          Write-Host ""
-          Write-Host "========================================================"
-          Write-Host " CLIENT SETUP (one-time):"
-          Write-Host "   winget install cloudflare.cloudflared"
-          Write-Host ""
-          Write-Host " CONNECT:"
-          if ($tunnelUrl) {
-            Write-Host "   cloudflared access rdp --hostname $tunnelUrl --url localhost:3389"
-          } else {
-            Write-Host "   cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:3389"
-          }
-          Write-Host ""
-          Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:3389"
-          Write-Host "========================================================"
-          Write-Host ""
-
-          if (-not $tunnelUrl -and (Test-Path "$env:TEMP\cloudflared.log")) {
-            Write-Host "--- cloudflared log ---"
-            Get-Content "$env:TEMP\cloudflared.log"
-          }
-
+      # --- Keep alive for debugging ---
       - name: Keep alive for RDP debugging
         if: inputs.debug_rdp == 'cloudflare'
         run: |
