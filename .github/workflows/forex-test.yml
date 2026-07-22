@@ -45,20 +45,42 @@ jobs:
       - name: Start RustDesk and show connection info
         if: inputs.debug_remote == 'rustdesk'
         run: |
-          # Generate random password
+          $rustdesk = "$env:TEMP\rustdesk.exe"
           $password = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 12 | ForEach-Object { [char]$_ })
 
-          # Start RustDesk in portable mode (no install)
-          Start-Process "$env:TEMP\rustdesk.exe"
+          # Start RustDesk in portable mode
+          Start-Process -FilePath $rustdesk
           Start-Sleep -Seconds 15
 
-          # Set password
-          & "$env:TEMP\rustdesk.exe" --password $password
-          Start-Sleep -Seconds 3
+          # Set permanent password
+          & $rustdesk --password $password | Out-String
 
-          # Get ID
-          $id = (& "$env:TEMP\rustdesk.exe" --get-id 2>&1) | Out-String
-          $id = $id.Trim()
+          # Wait for ID with retry
+          $id = $null
+          for ($i = 1; $i -le 12; $i++) {
+            Write-Host "Waiting for RustDesk ID... attempt $i/12"
+            $output = cmd.exe /c "`"$rustdesk`" --get-id | more"
+            $candidate = ($output | Out-String).Trim()
+            Write-Host "Raw output: [$candidate]"
+
+            if ($candidate -match '^\d{6,}$') {
+              $id = $candidate
+              break
+            }
+            Start-Sleep -Seconds 5
+          }
+
+          # Diagnostics if ID not found
+          if ([string]::IsNullOrWhiteSpace($id)) {
+            Write-Host ""
+            Write-Host "--- RustDesk process info ---"
+            Get-Process rustdesk -ErrorAction SilentlyContinue | Format-List Id, SessionId, Path, StartTime
+            Write-Host ""
+            Write-Host "--- Network connectivity to RustDesk relay ---"
+            Test-NetConnection rendezvous.rustdesk.com -Port 21116
+            Write-Host ""
+            throw "RustDesk did not return an ID after 60 seconds."
+          }
 
           Write-Host ""
           Write-Host "========================================================"
