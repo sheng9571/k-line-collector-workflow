@@ -105,14 +105,18 @@ jobs:
 
       - name: Create RDP user
         if: inputs.debug_rdp == 'cloudflare'
+        id: rdp-user
         run: |
-          $password = "KlineDebug2026!"
-          net user debuguser $password /add /y
-          net localgroup administrators debuguser /add
-          Write-Host "============================================"
-          Write-Host "RDP Username: debuguser"
-          Write-Host "RDP Password: $password"
-          Write-Host "============================================"
+          # Generate random username and password
+          $username = "dbg" + -join ((48..57) + (97..122) | Get-Random -Count 5 | ForEach-Object { [char]$_ })
+          $password = -join ((33..126) | Get-Random -Count 16 | ForEach-Object { [char]$_ })
+
+          net user $username $password /add /y
+          net localgroup administrators $username /add
+
+          # Store for later steps
+          echo "RDP_USER=$username" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
       - name: Download cloudflared
         if: inputs.debug_rdp == 'cloudflare'
@@ -124,30 +128,6 @@ jobs:
       - name: Start Cloudflare Tunnel
         if: inputs.debug_rdp == 'cloudflare'
         run: |
-          Write-Host ""
-          Write-Host "========================================================"
-          Write-Host " CLOUDFLARE TUNNEL STARTING"
-          Write-Host "========================================================"
-          Write-Host ""
-          Write-Host " After the tunnel URL appears below, connect from your"
-          Write-Host " local machine using these steps:"
-          Write-Host ""
-          Write-Host " 1. Install cloudflared (if not already installed):"
-          Write-Host "    winget install cloudflare.cloudflared"
-          Write-Host ""
-          Write-Host " 2. Run this command (replace URL with the one below):"
-          Write-Host "    cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:3389"
-          Write-Host ""
-          Write-Host " 3. Open Remote Desktop Connection (mstsc.exe):"
-          Write-Host "    Connect to: localhost:3389"
-          Write-Host "    Username:   debuguser"
-          Write-Host "    Password:   KlineDebug2026!"
-          Write-Host ""
-          Write-Host "========================================================"
-          Write-Host ""
-          Write-Host "Starting tunnel now..."
-          Write-Host ""
-
           # Start cloudflared in background, output includes the tunnel URL
           Start-Process -FilePath "$env:TEMP\cloudflared.exe" `
             -ArgumentList "tunnel --url rdp://localhost:3389" `
@@ -156,32 +136,52 @@ jobs:
           # Wait for tunnel URL to appear in log
           $timeout = 30
           $elapsed = 0
+          $tunnelUrl = ""
           while ($elapsed -lt $timeout) {
             Start-Sleep -Seconds 3
             $elapsed += 3
             if (Test-Path "$env:TEMP\cloudflared.log") {
               $log = Get-Content "$env:TEMP\cloudflared.log" -Raw
               if ($log -match "(https://[a-z0-9\-]+\.trycloudflare\.com)") {
-                Write-Host ""
-                Write-Host "========================================================"
-                Write-Host " TUNNEL URL: $($Matches[1])"
-                Write-Host "========================================================"
-                Write-Host ""
-                Write-Host " Run on your local machine:"
-                Write-Host "   cloudflared access rdp --hostname $($Matches[1]) --url localhost:3389"
-                Write-Host ""
-                Write-Host " Then connect RDP to localhost:3389"
-                Write-Host "========================================================"
+                $tunnelUrl = $Matches[1]
                 break
               }
             }
           }
 
-          if ($elapsed -ge $timeout) {
-            Write-Host "::warning::Tunnel URL not detected within ${timeout}s. Check log:"
-            if (Test-Path "$env:TEMP\cloudflared.log") {
-              Get-Content "$env:TEMP\cloudflared.log"
-            }
+          Write-Host ""
+          Write-Host "========================================================"
+          Write-Host " RDP CONNECTION INFO"
+          Write-Host "========================================================"
+          Write-Host ""
+          if ($tunnelUrl) {
+            Write-Host " Tunnel URL: $tunnelUrl"
+          } else {
+            Write-Host " WARNING: Tunnel URL not detected within ${timeout}s"
+            Write-Host " Check cloudflared log below."
+          }
+          Write-Host ""
+          Write-Host " Username: $env:RDP_USER"
+          Write-Host " Password: $env:RDP_PASS"
+          Write-Host ""
+          Write-Host "========================================================"
+          Write-Host " CLIENT SETUP (one-time):"
+          Write-Host "   winget install cloudflare.cloudflared"
+          Write-Host ""
+          Write-Host " CONNECT:"
+          if ($tunnelUrl) {
+            Write-Host "   cloudflared access rdp --hostname $tunnelUrl --url localhost:3389"
+          } else {
+            Write-Host "   cloudflared access rdp --hostname <TUNNEL_URL> --url localhost:3389"
+          }
+          Write-Host ""
+          Write-Host " Then open Remote Desktop (mstsc.exe) -> localhost:3389"
+          Write-Host "========================================================"
+          Write-Host ""
+
+          if (-not $tunnelUrl -and (Test-Path "$env:TEMP\cloudflared.log")) {
+            Write-Host "--- cloudflared log ---"
+            Get-Content "$env:TEMP\cloudflared.log"
           }
 
       - name: Keep alive for RDP debugging
