@@ -26,10 +26,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $screenshotDir = Join-Path $env:RUNNER_TEMP "desktop-screenshots"
+<<<<<<< Updated upstream
           New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
 
           $scriptPath = Join-Path $env:RUNNER_TEMP "capture-desktop.ps1"
           $pidPath = Join-Path $env:RUNNER_TEMP "capture-desktop.pid"
+=======
+          $scriptPath = Join-Path $env:RUNNER_TEMP "capture-desktop.ps1"
+          $pidPath = Join-Path $env:RUNNER_TEMP "capture-desktop.pid"
+          $stdoutPath = Join-Path $env:RUNNER_TEMP "capture-desktop.stdout.log"
+          $stderrPath = Join-Path $env:RUNNER_TEMP "capture-desktop.stderr.log"
+
+          New-Item -ItemType Directory -Path $screenshotDir -Force | Out-Null
+>>>>>>> Stashed changes
 
           @'
           param(
@@ -37,6 +46,11 @@ jobs:
             [string]$OutputDirectory
           )
 
+<<<<<<< Updated upstream
+=======
+          $ErrorActionPreference = "Continue"
+
+>>>>>>> Stashed changes
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
 
@@ -46,12 +60,21 @@ jobs:
 
           while ($index -lt 180) {
             try {
+<<<<<<< Updated upstream
               $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
               $filename = "{0:D5}-{1}.png" -f $index, $timestamp
               $outputPath = Join-Path $OutputDirectory $filename
 
               $screens = [System.Windows.Forms.Screen]::AllScreens
 
+=======
+              $screens = [System.Windows.Forms.Screen]::AllScreens
+
+              if (-not $screens -or $screens.Count -eq 0) {
+                throw "No screens were detected."
+              }
+
+>>>>>>> Stashed changes
               $left = ($screens | ForEach-Object { $_.Bounds.Left } | Measure-Object -Minimum).Minimum
               $top = ($screens | ForEach-Object { $_.Bounds.Top } | Measure-Object -Minimum).Minimum
               $right = ($screens | ForEach-Object { $_.Bounds.Right } | Measure-Object -Maximum).Maximum
@@ -60,6 +83,17 @@ jobs:
               $width = $right - $left
               $height = $bottom - $top
 
+<<<<<<< Updated upstream
+=======
+              if ($width -le 0 -or $height -le 0) {
+                throw "Invalid screen size: ${width}x${height}"
+              }
+
+              $timestamp = Get-Date -Format "yyyyMMdd-HHmmss-fff"
+              $filename = "{0:D5}-{1}.png" -f $index, $timestamp
+              $outputPath = Join-Path $OutputDirectory $filename
+
+>>>>>>> Stashed changes
               $bitmap = New-Object System.Drawing.Bitmap $width, $height
               $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 
@@ -69,6 +103,10 @@ jobs:
                   [System.Drawing.Size]::new($width, $height)
                 )
                 $bitmap.Save($outputPath, [System.Drawing.Imaging.ImageFormat]::Png)
+<<<<<<< Updated upstream
+=======
+                Write-Output "Saved: $outputPath"
+>>>>>>> Stashed changes
               }
               finally {
                 $graphics.Dispose()
@@ -76,7 +114,15 @@ jobs:
               }
             }
             catch {
+<<<<<<< Updated upstream
               Write-Error "Screenshot failed: $($_.Exception.Message)"
+=======
+              [Console]::Error.WriteLine(
+                "Screenshot failed at {0}: {1}" -f `
+                  (Get-Date -Format "o"),
+                  $_.Exception.ToString()
+              )
+>>>>>>> Stashed changes
             }
 
             $index++
@@ -84,6 +130,7 @@ jobs:
           }
           '@ | Set-Content -Path $scriptPath -Encoding UTF8
 
+<<<<<<< Updated upstream
           $process = Start-Process `
             -FilePath "pwsh.exe" `
             -ArgumentList @(
@@ -95,11 +142,37 @@ jobs:
             ) `
             -WindowStyle Hidden `
             -PassThru
+=======
+          $originalTrackingId = $env:RUNNER_TRACKING_ID
+
+          try {
+            # Prevent Actions Runner from killing the background process
+            $env:RUNNER_TRACKING_ID = ""
+
+            $process = Start-Process `
+              -FilePath "pwsh.exe" `
+              -ArgumentList @(
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", "`"$scriptPath`"",
+                "-OutputDirectory", "`"$screenshotDir`""
+              ) `
+              -WindowStyle Hidden `
+              -RedirectStandardOutput $stdoutPath `
+              -RedirectStandardError $stderrPath `
+              -PassThru
+          }
+          finally {
+            $env:RUNNER_TRACKING_ID = $originalTrackingId
+          }
+>>>>>>> Stashed changes
 
           $process.Id | Set-Content -Path $pidPath -Encoding ASCII
 
           "SCREENSHOT_DIR=$screenshotDir" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+<<<<<<< Updated upstream
 
           "SCREENSHOT_PID_FILE=$pidPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -108,6 +181,53 @@ jobs:
           Write-Host "PID: $($process.Id)"
           Write-Host "Directory: $screenshotDir"
           Write-Host "Max frames: 180 (about 6 minutes)"
+=======
+          "SCREENSHOT_PID_FILE=$pidPath" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SCREENSHOT_STDOUT=$stdoutPath" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "SCREENSHOT_STDERR=$stderrPath" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          # Verify screenshots are being produced
+          Start-Sleep -Seconds 5
+
+          $process.Refresh()
+
+          if ($process.HasExited) {
+            Write-Host "::warning::Screenshot process exited early (code: $($process.ExitCode))"
+            if (Test-Path $stderrPath) {
+              Write-Host "========== screenshot stderr =========="
+              Get-Content $stderrPath
+            }
+            Write-Host "::warning::Desktop screenshots will not be available. Continuing workflow."
+          }
+
+          $firstScreenshot = Get-ChildItem `
+            -Path $screenshotDir `
+            -Filter "*.png" `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+          if (-not $firstScreenshot) {
+            Write-Host "::warning::No PNG produced in 5s. Checking diagnostics..."
+            Write-Host "========== screen info =========="
+            Add-Type -AssemblyName System.Windows.Forms
+            [System.Windows.Forms.Screen]::AllScreens |
+              Format-List DeviceName, Bounds, Primary
+            if (Test-Path $stderrPath) {
+              Write-Host "========== screenshot stderr =========="
+              Get-Content $stderrPath
+            }
+            Write-Host "::warning::Desktop screenshots may not work on this runner. Continuing workflow."
+          }
+          else {
+            Write-Host "Screenshot capture verified:"
+            Get-Item $firstScreenshot.FullName |
+              Format-List FullName, Length, LastWriteTime
+          }
+>>>>>>> Stashed changes
 
       - name: Download MT5 installer
         shell: pwsh
@@ -503,11 +623,41 @@ jobs:
               Format-Table Name, Length, LastWriteTime
           }
 
+<<<<<<< Updated upstream
       - name: Upload desktop screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mt5-desktop-screenshots
           path: ${{ runner.temp }}/desktop-screenshots
+=======
+          if (
+            $env:SCREENSHOT_STDOUT -and
+            (Test-Path $env:SCREENSHOT_STDOUT)
+          ) {
+            Write-Host ""
+            Write-Host "========== screenshot stdout (last 50 lines) =========="
+            Get-Content $env:SCREENSHOT_STDOUT -Tail 50
+          }
+
+          if (
+            $env:SCREENSHOT_STDERR -and
+            (Test-Path $env:SCREENSHOT_STDERR)
+          ) {
+            Write-Host ""
+            Write-Host "========== screenshot stderr =========="
+            Get-Content $env:SCREENSHOT_STDERR -Tail 100
+          }
+
+      - name: Upload desktop diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-desktop-diagnostics
+          path: |
+            ${{ runner.temp }}/desktop-screenshots
+            ${{ runner.temp }}/capture-desktop.stdout.log
+            ${{ runner.temp }}/capture-desktop.stderr.log
+>>>>>>> Stashed changes
           if-no-files-found: warn
           retention-days: 3
