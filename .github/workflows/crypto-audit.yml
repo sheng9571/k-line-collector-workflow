@@ -26,6 +26,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
+      - name: Clone collector repo
+        run: git clone --depth 1 https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git
+
       - name: Run audit
         run: |
           mkdir -p /tmp/audit-output
@@ -34,6 +37,8 @@ jobs:
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
             -e AUDIT_OUTPUT_DIR=/tmp/audit-output \
             -v /tmp/audit-output:/tmp/audit-output \
+            -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
+            -v ${{ github.workspace }}/k-line-collector/crypto:/app/crypto:ro \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto audit
 
