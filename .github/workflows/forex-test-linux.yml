@@ -1,34 +1,48 @@
-name: Forex Test Linux - Official MT5 Script
+name: Forex Test Linux - MT5 via Wine
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-mt5:
+  test-mt5-wine:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
 
     env:
       DISPLAY: ":99"
       WINEPREFIX: "/home/runner/.mt5"
+      WINEARCH: "win64"
       WINEDEBUG: "-all"
+      DEBIAN_FRONTEND: "noninteractive"
+      NEEDRESTART_MODE: "a"
 
     steps:
+      # ============================================================
+      # 1. Runner information
+      # ============================================================
+
       - name: Show runner information
         run: |
           set -euxo pipefail
 
           cat /etc/os-release
           uname -a
+
           echo "HOME=$HOME"
           echo "DISPLAY=$DISPLAY"
           echo "WINEPREFIX=$WINEPREFIX"
+          echo "WINEARCH=$WINEARCH"
 
-      - name: Install Xvfb and screenshot tools
+      # ============================================================
+      # 2. Install Xvfb and diagnostic utilities
+      # ============================================================
+
+      - name: Install Xvfb and utilities
         run: |
           set -euxo pipefail
 
           sudo apt-get update
+
           sudo apt-get install -y --no-install-recommends \
             xvfb \
             x11-utils \
@@ -39,17 +53,29 @@ jobs:
             curl \
             ca-certificates \
             gnupg \
-            bc
+            bc \
+            file \
+            xxd
 
+          echo "=== Installed commands ==="
           command -v Xvfb
           command -v xdpyinfo
           command -v import
+          command -v curl
+          command -v wget
+
+      # ============================================================
+      # 3. Start and verify Xvfb
+      # ============================================================
 
       - name: Start and verify Xvfb
         run: |
           set -euxo pipefail
 
-          Xvfb "$DISPLAY" \
+          mkdir -p /tmp/screenshots
+
+          RUNNER_TRACKING_ID="" \
+          nohup Xvfb "$DISPLAY" \
             -screen 0 1280x1024x24 \
             -nolisten tcp \
             -ac \
@@ -59,20 +85,22 @@ jobs:
 
           sleep 3
 
-          if ! kill -0 "$(cat /tmp/xvfb.pid)" 2>/dev/null; then
-            echo "::error::Xvfb process exited"
+          XVFB_PID="$(cat /tmp/xvfb.pid)"
+
+          if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+            echo "::error::Xvfb process exited unexpectedly"
             cat /tmp/xvfb.log || true
             exit 1
           fi
 
-          xdpyinfo -display "$DISPLAY" >/tmp/xdpyinfo.log
+          xdpyinfo \
+            -display "$DISPLAY" \
+            >/tmp/xdpyinfo.log
 
-          echo "Xvfb is responding on $DISPLAY"
+          echo "=== Xvfb display information ==="
           grep -E \
             'name of display|dimensions|depth of root window' \
             /tmp/xdpyinfo.log || true
-
-          mkdir -p /tmp/screenshots
 
           import \
             -display "$DISPLAY" \
@@ -85,6 +113,12 @@ jobs:
           ls -lh /tmp/screenshots/00000-xvfb-test.png
 
           touch /tmp/xvfb-ok
+
+          echo "Xvfb is working on $DISPLAY"
+
+      # ============================================================
+      # 4. Start background screenshot capture
+      # ============================================================
 
       - name: Start background screenshots
         if: always()
@@ -99,7 +133,7 @@ jobs:
           set +e
 
           INDEX=1
-          MAX=900
+          MAX=1000
 
           while [ "$INDEX" -le "$MAX" ]; do
             TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
@@ -119,135 +153,360 @@ jobs:
           chmod +x /tmp/screenshot-loop.sh
 
           RUNNER_TRACKING_ID="" \
-            nohup /tmp/screenshot-loop.sh \
+          nohup /tmp/screenshot-loop.sh \
             >/tmp/screenshot-stdout.log 2>&1 &
 
           echo $! >/tmp/screenshot.pid
 
-          sleep 3
+          sleep 4
 
-          if kill -0 "$(cat /tmp/screenshot.pid)" 2>/dev/null; then
-            echo "Screenshot loop is running"
+          SCREENSHOT_PID="$(cat /tmp/screenshot.pid)"
+
+          if kill -0 "$SCREENSHOT_PID" 2>/dev/null; then
+            echo "Screenshot loop is running with PID $SCREENSHOT_PID"
           else
             echo "::warning::Screenshot loop exited unexpectedly"
+            cat /tmp/screenshot-stdout.log || true
+            cat /tmp/screenshot-errors.log || true
           fi
 
-          find /tmp/screenshots \
-            -maxdepth 1 \
-            -type f \
-            -name '*.png' \
-            -printf '%f\n' |
-            head -10
+          SCREENSHOT_COUNT="$(
+            find /tmp/screenshots \
+              -maxdepth 1 \
+              -type f \
+              -name '*.png' |
+              wc -l
+          )"
 
-      - name: Download official MT5 Linux installer
+          echo "Screenshot count: $SCREENSHOT_COUNT"
+
+      # ============================================================
+      # 5. Download the official MetaQuotes Linux installer script
+      #    This step is kept for provenance and diagnostics.
+      # ============================================================
+
+      - name: Download official MT5 Linux script
         run: |
           set -euxo pipefail
 
-          wget \
-            --tries=3 \
-            --timeout=30 \
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --connect-timeout 30 \
             "https://download.terminal.free/cdn/web/metaquotes.software.corp/mt5/mt5linux.sh" \
-            -O /tmp/mt5linux.sh
+            --output /tmp/mt5linux.sh
 
           chmod +x /tmp/mt5linux.sh
 
           test -s /tmp/mt5linux.sh
 
-          echo "=== Original script checksum ==="
+          echo "=== Official script checksum ==="
           sha256sum /tmp/mt5linux.sh
 
-          echo "=== Relevant original commands ==="
+          echo "=== Official script relevant lines ==="
           grep -nE \
-            'apt upgrade|winehq|WINEPREFIX|webview|mt5setup' \
+            'URL_MT5|URL_WEBVIEW|WINE_VERSION|winehq|WINEPREFIX|winecfg|webview2|mt5setup' \
             /tmp/mt5linux.sh || true
 
-      - name: Adapt official script for CI
+      # ============================================================
+      # 6. Install WineHQ staging
+      # ============================================================
+
+      - name: Install WineHQ staging
         run: |
           set -euxo pipefail
 
-          cp /tmp/mt5linux.sh /tmp/mt5linux-ci.sh
+          sudo dpkg --add-architecture i386
 
-          # A fresh GitHub-hosted runner does not need a full OS upgrade.
-          sed -i \
-            's|^[[:space:]]*sudo apt upgrade -y[[:space:]]*$|echo "Skipping apt upgrade in GitHub Actions"|' \
-            /tmp/mt5linux-ci.sh
+          sudo mkdir -pm755 /etc/apt/keyrings
 
-          # Also cover scripts that use apt-get instead of apt.
-          sed -i \
-            's|^[[:space:]]*sudo apt-get upgrade -y[[:space:]]*$|echo "Skipping apt-get upgrade in GitHub Actions"|' \
-            /tmp/mt5linux-ci.sh
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            "https://dl.winehq.org/wine-builds/winehq.key" |
+            sudo gpg \
+              --dearmor \
+              --yes \
+              --output /etc/apt/keyrings/winehq-archive.key
 
-          # Run the MT5 installer in automatic mode.
-          sed -i \
-            's|WINEPREFIX=~/.mt5 wine mt5setup.exe$|WINEPREFIX=~/.mt5 wine mt5setup.exe /auto|' \
-            /tmp/mt5linux-ci.sh
+          sudo wget \
+            -NP /etc/apt/sources.list.d/ \
+            "https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources"
 
-          # Reboot is neither possible nor required for this test.
-          sed -i \
-            's|echo Please reboot OS|echo "Installation script completed; reboot skipped in GitHub Actions"|' \
-            /tmp/mt5linux-ci.sh
+          sudo apt-get update
 
-          chmod +x /tmp/mt5linux-ci.sh
+          sudo apt-get install -y --install-recommends \
+            winehq-staging
 
-          echo "=== Adapted commands ==="
-          grep -nE \
-            'upgrade|winehq|WINEPREFIX|webview|mt5setup|reboot' \
-            /tmp/mt5linux-ci.sh || true
+          echo "=== Wine executables ==="
+          command -v wine
+          command -v wineboot
+          command -v winecfg
+          command -v wineserver
+          command -v winepath
 
-      - name: Run official MT5 installation
+          echo "=== Wine version ==="
+          wine --version
+
+          echo "=== Installed Wine packages ==="
+          dpkg -l |
+            grep -E '^ii\s+(winehq|wine-staging|wine-staging-amd64|wine-staging-i386)' ||
+            true
+
+          touch /tmp/wine-installed-ok
+
+      # ============================================================
+      # 7. Initialize a clean Wine prefix
+      #
+      # WINEDLLOVERRIDES prevents Wine from displaying the interactive
+      # Wine Mono / Wine Gecko installation dialogs.
+      # ============================================================
+
+      - name: Initialize clean Wine prefix
+        env:
+          WINEDLLOVERRIDES: "mscoree,mshtml="
+        run: |
+          set -euxo pipefail
+
+          echo "Removing incomplete Wine prefix if present..."
+
+          wineserver -k || true
+          sleep 2
+
+          rm -rf "$WINEPREFIX"
+          mkdir -p "$WINEPREFIX"
+
+          echo "Initializing Wine prefix..."
+
+          set +e
+
+          timeout \
+            --signal=TERM \
+            --kill-after=20s \
+            180s \
+            wineboot --init \
+            >/tmp/wineboot.log 2>&1
+
+          WINEBOOT_EXIT=$?
+
+          set -e
+
+          echo "$WINEBOOT_EXIT" >/tmp/wineboot-exit-code
+          echo "wineboot exit code: $WINEBOOT_EXIT"
+
+          # wineboot may leave helper processes running even after the
+          # prefix has been initialized.
+          sleep 10
+
+          test -f "$WINEPREFIX/system.reg"
+          test -f "$WINEPREFIX/user.reg"
+          test -d "$WINEPREFIX/drive_c/windows/system32"
+
+          echo "Setting Windows version to Windows 11..."
+
+          timeout \
+            --signal=TERM \
+            --kill-after=15s \
+            60s \
+            winecfg -v=win11 \
+            >/tmp/winecfg.log 2>&1 || true
+
+          sleep 5
+
+          echo "=== Wine prefix contents ==="
+          find "$WINEPREFIX" \
+            -maxdepth 2 \
+            -type d |
+            head -100
+
+          echo "=== Test Wine cmd.exe ==="
+
+          timeout \
+            --signal=TERM \
+            --kill-after=15s \
+            60s \
+            wine cmd /c ver \
+            >/tmp/wine-cmd.log 2>&1
+
+          cat /tmp/wine-cmd.log
+
+          touch /tmp/wine-prefix-ok
+
+      # ============================================================
+      # 8. Download official WebView2 and MT5 installers
+      # ============================================================
+
+      - name: Download WebView2 and MT5 installers
+        run: |
+          set -euxo pipefail
+
+          WEBVIEW_URL="$(
+            sed -n \
+              's/^URL_WEBVIEW="\([^"]*\)".*/\1/p' \
+              /tmp/mt5linux.sh |
+              head -1
+          )"
+
+          MT5_URL="$(
+            sed -n \
+              's/^URL_MT5="\([^"]*\)".*/\1/p' \
+              /tmp/mt5linux.sh |
+              head -1
+          )"
+
+          if [ -z "$WEBVIEW_URL" ]; then
+            echo "::error::Unable to read WebView2 URL from official script"
+            exit 1
+          fi
+
+          if [ -z "$MT5_URL" ]; then
+            echo "::error::Unable to read MT5 URL from official script"
+            exit 1
+          fi
+
+          echo "WebView2 URL: $WEBVIEW_URL"
+          echo "MT5 URL: $MT5_URL"
+
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --connect-timeout 30 \
+            "$WEBVIEW_URL" \
+            --output /tmp/webview2.exe
+
+          curl \
+            --fail \
+            --location \
+            --retry 3 \
+            --connect-timeout 30 \
+            "$MT5_URL" \
+            --output /tmp/mt5setup.exe
+
+          test -s /tmp/webview2.exe
+          test -s /tmp/mt5setup.exe
+
+          WEBVIEW_MAGIC="$(xxd -l 2 -p /tmp/webview2.exe)"
+          MT5_MAGIC="$(xxd -l 2 -p /tmp/mt5setup.exe)"
+
+          if [ "$WEBVIEW_MAGIC" != "4d5a" ]; then
+            echo "::error::WebView2 installer is not a valid PE file"
+            file /tmp/webview2.exe || true
+            exit 1
+          fi
+
+          if [ "$MT5_MAGIC" != "4d5a" ]; then
+            echo "::error::MT5 installer is not a valid PE file"
+            file /tmp/mt5setup.exe || true
+            exit 1
+          fi
+
+          echo "=== Downloaded installers ==="
+          ls -lh /tmp/webview2.exe /tmp/mt5setup.exe
+          file /tmp/webview2.exe /tmp/mt5setup.exe
+
+      # ============================================================
+      # 9. Install Microsoft Edge WebView2
+      # ============================================================
+
+      - name: Install WebView2
         continue-on-error: true
         run: |
           set +e
 
-          echo "Starting official MT5 Linux installation..."
-          echo "DISPLAY=$DISPLAY"
-          echo "WINEPREFIX=$WINEPREFIX"
+          echo "Installing Microsoft Edge WebView2..."
 
           timeout \
             --signal=TERM \
             --kill-after=30s \
-            1200s \
-            /tmp/mt5linux-ci.sh \
+            420s \
+            wine /tmp/webview2.exe /silent /install \
+            > >(tee /tmp/webview2-install.log) \
+            2> >(tee /tmp/webview2-install-error.log >&2)
+
+          WEBVIEW_EXIT=$?
+
+          echo "$WEBVIEW_EXIT" >/tmp/webview2-exit-code
+          echo "WebView2 installer exit code: $WEBVIEW_EXIT"
+
+          sleep 15
+
+          echo "=== Wine processes after WebView2 ==="
+          pgrep -af \
+            'wine|wineserver|webview|msedge' ||
+            true
+
+          if [ "$WEBVIEW_EXIT" -eq 124 ]; then
+            echo "::warning::WebView2 installer timed out"
+          elif [ "$WEBVIEW_EXIT" -ne 0 ]; then
+            echo "::warning::WebView2 installer returned $WEBVIEW_EXIT"
+          fi
+
+          # Do not fail here. Screenshots and logs must still be uploaded.
+          exit 0
+
+      # ============================================================
+      # 10. Install MT5
+      # ============================================================
+
+      - name: Install MT5
+        continue-on-error: true
+        run: |
+          set +e
+
+          echo "Installing MetaTrader 5..."
+
+          timeout \
+            --signal=TERM \
+            --kill-after=30s \
+            600s \
+            wine /tmp/mt5setup.exe /auto \
             > >(tee /tmp/mt5-install.log) \
             2> >(tee /tmp/mt5-install-error.log >&2)
 
-          INSTALL_EXIT=$?
+          MT5_INSTALL_EXIT=$?
 
-          echo "$INSTALL_EXIT" >/tmp/mt5-install-exit-code
+          echo "$MT5_INSTALL_EXIT" >/tmp/mt5-install-exit-code
+          echo "MT5 installer exit code: $MT5_INSTALL_EXIT"
 
-          echo "Official installer exit code: $INSTALL_EXIT"
+          sleep 20
 
-          if [ "$INSTALL_EXIT" -eq 124 ]; then
-            echo "::warning::Official installer reached the timeout"
-          elif [ "$INSTALL_EXIT" -ne 0 ]; then
-            echo "::warning::Official installer returned $INSTALL_EXIT"
+          if [ "$MT5_INSTALL_EXIT" -eq 124 ]; then
+            echo "::warning::MT5 installer timed out"
+          elif [ "$MT5_INSTALL_EXIT" -ne 0 ]; then
+            echo "::warning::MT5 installer returned $MT5_INSTALL_EXIT"
           fi
 
-          echo "=== Wine commands ==="
-          command -v wine || true
-          command -v wineboot || true
-          command -v wineserver || true
-          wine --version || true
+          echo "=== Wine processes after MT5 installation ==="
+          pgrep -af \
+            'wine|wineserver|terminal|metatrader|mt5setup' ||
+            true
 
-          echo "=== Wine prefix ==="
-          find "$WINEPREFIX" \
-            -maxdepth 3 \
-            -type d \
+          echo "=== Executables under Wine prefix ==="
+          find "$WINEPREFIX/drive_c" \
+            -type f \
+            -iname '*.exe' \
             2>/dev/null |
-            head -100 || true
+            head -200 || true
 
-          # Do not fail here. We still need to collect and upload screenshots.
+          # Do not fail here. Diagnostics still need to be uploaded.
           exit 0
 
-      - name: Find installed MT5
+      # ============================================================
+      # 11. Find installed terminal64.exe
+      # ============================================================
+
+      - name: Find installed MT5 terminal
         if: always()
         run: |
           set +e
 
-          echo "Searching for terminal64.exe under $WINEPREFIX"
+          echo "Searching for terminal64.exe..."
 
           TERMINAL="$(
-            find "$WINEPREFIX" \
+            find "$WINEPREFIX/drive_c" \
               -type f \
               -iname 'terminal64.exe' \
               -print \
@@ -257,32 +516,48 @@ jobs:
 
           if [ -z "$TERMINAL" ]; then
             echo "::warning::terminal64.exe was not found"
+            echo "not-found" >/tmp/mt5-terminal-status
 
-            echo "=== EXE files in Wine prefix ==="
-            find "$WINEPREFIX" \
-              -type f \
-              -iname '*.exe' \
+            echo "=== Wine prefix directories ==="
+            find "$WINEPREFIX/drive_c" \
+              -maxdepth 6 \
+              -type d \
               2>/dev/null |
               head -200 || true
 
-            echo "not-found" >/tmp/mt5-terminal-status
+            echo "=== EXE files ==="
+            find "$WINEPREFIX/drive_c" \
+              -type f \
+              -iname '*.exe' \
+              2>/dev/null |
+              head -300 || true
+
             exit 0
           fi
 
           echo "MT5 terminal found:"
           echo "$TERMINAL"
 
-          printf '%s\n' "$TERMINAL" >/tmp/mt5-terminal-path
+          printf '%s\n' \
+            "$TERMINAL" \
+            >/tmp/mt5-terminal-path
 
           TERMINAL_WINDOWS_PATH="$(
-            WINEPREFIX="$WINEPREFIX" winepath -w "$TERMINAL" 2>/dev/null
+            winepath -w "$TERMINAL" 2>/dev/null
           )"
 
-          echo "Windows path: $TERMINAL_WINDOWS_PATH"
-          printf '%s\n' "$TERMINAL_WINDOWS_PATH" \
+          printf '%s\n' \
+            "$TERMINAL_WINDOWS_PATH" \
             >/tmp/mt5-terminal-windows-path
 
+          echo "Linux path: $TERMINAL"
+          echo "Windows path: $TERMINAL_WINDOWS_PATH"
+
           echo "found" >/tmp/mt5-terminal-status
+
+      # ============================================================
+      # 12. Start MT5 without logging in
+      # ============================================================
 
       - name: Start MT5 without login
         if: always()
@@ -301,23 +576,22 @@ jobs:
           echo "$TERMINAL"
 
           RUNNER_TRACKING_ID="" \
-          WINEPREFIX="$WINEPREFIX" \
-          DISPLAY="$DISPLAY" \
-            nohup wine "$TERMINAL" \
+          nohup wine "$TERMINAL" \
             >/tmp/mt5-terminal.log 2>&1 &
 
           INITIAL_PID=$!
+
           echo "$INITIAL_PID" >/tmp/mt5-initial.pid
+          echo "Initial Wine process PID: $INITIAL_PID"
 
-          echo "Initial Wine PID: $INITIAL_PID"
-
-          # Give Wine and MT5 enough time to create windows and finish
-          # any first-run initialization.
+          # Allow first-run initialization, WebView2 and the terminal UI
+          # enough time to appear.
           sleep 45
 
-          echo "=== Related processes ==="
+          echo "=== MT5 and Wine processes ==="
+
           pgrep -af \
-            'terminal64.exe|terminal.exe|MetaTrader|metatrader|wine' \
+            'terminal64.exe|terminal.exe|MetaTrader|metatrader|wine|wineserver' \
             >/tmp/mt5-processes.log || true
 
           cat /tmp/mt5-processes.log || true
@@ -329,19 +603,22 @@ jobs:
 
           if [ -n "$MT5_PID" ]; then
             echo "MT5 appears to be running with PID $MT5_PID"
+
             echo "$MT5_PID" >/tmp/mt5-running.pid
             echo "running" >/tmp/mt5-launch-status
+
             touch /tmp/mt5-opened-ok
           else
-            echo "::warning::No terminal64.exe process was found"
+            echo "::warning::No terminal64.exe process is currently running"
             echo "not-running" >/tmp/mt5-launch-status
           fi
 
-          # Capture an explicit screenshot after the MT5 launch attempt.
+          echo "Taking explicit MT5 screenshots..."
+
           import \
             -display "$DISPLAY" \
             -window root \
-            /tmp/screenshots/99990-after-mt5-launch.png \
+            /tmp/screenshots/99990-mt5-after-45-seconds.png \
             2>>/tmp/screenshot-errors.log || true
 
           sleep 15
@@ -349,18 +626,32 @@ jobs:
           import \
             -display "$DISPLAY" \
             -window root \
-            /tmp/screenshots/99991-after-mt5-wait.png \
+            /tmp/screenshots/99991-mt5-after-60-seconds.png \
             2>>/tmp/screenshot-errors.log || true
 
-          # Do not fail yet. Artifacts must be uploaded first.
+          sleep 15
+
+          import \
+            -display "$DISPLAY" \
+            -window root \
+            /tmp/screenshots/99992-mt5-after-75-seconds.png \
+            2>>/tmp/screenshot-errors.log || true
+
+          # Do not fail before artifact upload.
           exit 0
+
+      # ============================================================
+      # 13. Collect diagnostics
+      # ============================================================
 
       - name: Collect diagnostics
         if: always()
         run: |
           set +e
 
-          echo "=== Test status ==="
+          echo "============================================================"
+          echo "Test status"
+          echo "============================================================"
 
           echo -n "Xvfb: "
           if [ -f /tmp/xvfb-ok ]; then
@@ -369,27 +660,47 @@ jobs:
             echo "FAILED"
           fi
 
-          echo -n "Installer exit code: "
-          cat /tmp/mt5-install-exit-code 2>/dev/null || echo "unknown"
-
-          echo -n "Terminal: "
-          cat /tmp/mt5-terminal-status 2>/dev/null || echo "unknown"
-
-          echo -n "Launch: "
-          cat /tmp/mt5-launch-status 2>/dev/null || echo "unknown"
-
-          echo "=== Xvfb process ==="
-          if [ -f /tmp/xvfb.pid ]; then
-            XVFB_PID="$(cat /tmp/xvfb.pid)"
-            ps -fp "$XVFB_PID" || true
+          echo -n "Wine installed: "
+          if [ -f /tmp/wine-installed-ok ]; then
+            echo "OK"
+          else
+            echo "FAILED"
           fi
 
-          echo "=== Wine and MT5 processes ==="
-          pgrep -af \
-            'terminal64.exe|terminal.exe|MetaTrader|metatrader|wine|wineserver' \
-            || true
+          echo -n "Wine prefix: "
+          if [ -f /tmp/wine-prefix-ok ]; then
+            echo "OK"
+          else
+            echo "FAILED"
+          fi
 
-          echo "=== Screenshot count ==="
+          echo -n "wineboot exit code: "
+          cat /tmp/wineboot-exit-code 2>/dev/null || echo "unknown"
+
+          echo -n "WebView2 exit code: "
+          cat /tmp/webview2-exit-code 2>/dev/null || echo "unknown"
+
+          echo -n "MT5 installer exit code: "
+          cat /tmp/mt5-install-exit-code 2>/dev/null || echo "unknown"
+
+          echo -n "MT5 terminal: "
+          cat /tmp/mt5-terminal-status 2>/dev/null || echo "unknown"
+
+          echo -n "MT5 launch: "
+          cat /tmp/mt5-launch-status 2>/dev/null || echo "unknown"
+
+          echo "============================================================"
+          echo "Processes"
+          echo "============================================================"
+
+          pgrep -af \
+            'Xvfb|terminal64.exe|terminal.exe|MetaTrader|metatrader|wine|wineserver|webview|msedge' ||
+            true
+
+          echo "============================================================"
+          echo "Screenshot count"
+          echo "============================================================"
+
           SCREENSHOT_COUNT="$(
             find /tmp/screenshots \
               -maxdepth 1 \
@@ -399,9 +710,13 @@ jobs:
               wc -l
           )"
 
-          echo "$SCREENSHOT_COUNT"
+          echo "$SCREENSHOT_COUNT" |
+            tee /tmp/screenshot-count
 
-          echo "=== Latest screenshots ==="
+          echo "============================================================"
+          echo "Latest screenshots"
+          echo "============================================================"
+
           find /tmp/screenshots \
             -maxdepth 1 \
             -type f \
@@ -409,28 +724,64 @@ jobs:
             -printf '%TY-%Tm-%Td %TH:%TM:%TS %f\n' \
             2>/dev/null |
             sort |
-            tail -20 || true
+            tail -30 || true
 
-          echo "=== MT5 terminal log ==="
-          tail -200 /tmp/mt5-terminal.log 2>/dev/null || true
+          echo "============================================================"
+          echo "Wineboot log"
+          echo "============================================================"
 
-          echo "=== Installer stderr ==="
-          tail -200 /tmp/mt5-install-error.log 2>/dev/null || true
+          tail -200 /tmp/wineboot.log 2>/dev/null || true
 
-          echo "=== Xvfb log ==="
-          tail -100 /tmp/xvfb.log 2>/dev/null || true
+          echo "============================================================"
+          echo "Winecfg log"
+          echo "============================================================"
 
-          echo "=== Screenshot errors ==="
-          tail -100 /tmp/screenshot-errors.log 2>/dev/null || true
+          tail -200 /tmp/winecfg.log 2>/dev/null || true
 
-          # Stop only the screenshot loop. Leaving MT5 until after diagnostics
-          # gives the final screenshot the best chance of showing the window.
+          echo "============================================================"
+          echo "WebView2 installer log"
+          echo "============================================================"
+
+          tail -200 /tmp/webview2-install.log 2>/dev/null || true
+          tail -200 /tmp/webview2-install-error.log 2>/dev/null || true
+
+          echo "============================================================"
+          echo "MT5 installer log"
+          echo "============================================================"
+
+          tail -300 /tmp/mt5-install.log 2>/dev/null || true
+          tail -300 /tmp/mt5-install-error.log 2>/dev/null || true
+
+          echo "============================================================"
+          echo "MT5 terminal log"
+          echo "============================================================"
+
+          tail -300 /tmp/mt5-terminal.log 2>/dev/null || true
+
+          echo "============================================================"
+          echo "Xvfb log"
+          echo "============================================================"
+
+          tail -200 /tmp/xvfb.log 2>/dev/null || true
+
+          echo "============================================================"
+          echo "Screenshot errors"
+          echo "============================================================"
+
+          tail -200 /tmp/screenshot-errors.log 2>/dev/null || true
+
+          # Stop screenshot capture only after all final screenshots and
+          # diagnostics have been collected.
           if [ -f /tmp/screenshot.pid ]; then
             SCREENSHOT_PID="$(cat /tmp/screenshot.pid)"
             kill "$SCREENSHOT_PID" 2>/dev/null || true
           fi
 
           sleep 3
+
+      # ============================================================
+      # 14. Upload artifacts regardless of success or failure
+      # ============================================================
 
       - name: Upload screenshots and logs
         if: always()
@@ -439,10 +790,19 @@ jobs:
           name: mt5-xvfb-diagnostics
           path: |
             /tmp/screenshots/
+            /tmp/mt5linux.sh
             /tmp/xvfb.log
             /tmp/xdpyinfo.log
             /tmp/screenshot-stdout.log
             /tmp/screenshot-errors.log
+            /tmp/screenshot-count
+            /tmp/wineboot.log
+            /tmp/wineboot-exit-code
+            /tmp/winecfg.log
+            /tmp/wine-cmd.log
+            /tmp/webview2-install.log
+            /tmp/webview2-install-error.log
+            /tmp/webview2-exit-code
             /tmp/mt5-install.log
             /tmp/mt5-install-error.log
             /tmp/mt5-install-exit-code
@@ -454,6 +814,10 @@ jobs:
             /tmp/mt5-launch-status
           if-no-files-found: warn
           retention-days: 3
+
+      # ============================================================
+      # 15. Mark job success or failure after artifacts are uploaded
+      # ============================================================
 
       - name: Final test result
         if: always()
@@ -467,14 +831,36 @@ jobs:
             FAILED=1
           fi
 
+          if [ ! -f /tmp/wine-installed-ok ]; then
+            echo "::error::WineHQ staging was not installed correctly"
+            FAILED=1
+          fi
+
+          if [ ! -f /tmp/wine-prefix-ok ]; then
+            echo "::error::Wine prefix initialization failed"
+            FAILED=1
+          fi
+
+          if [ ! -s /tmp/mt5-terminal-path ]; then
+            echo "::error::terminal64.exe was not found"
+            FAILED=1
+          fi
+
           if [ ! -f /tmp/mt5-opened-ok ]; then
             echo "::error::MT5 did not remain running after launch"
             FAILED=1
           fi
 
           if [ "$FAILED" -ne 0 ]; then
-            echo "Test failed, but screenshots and logs were uploaded."
+            echo
+            echo "MT5 test failed."
+            echo "Screenshots and logs were uploaded as:"
+            echo "mt5-xvfb-diagnostics"
             exit 1
           fi
 
-          echo "Xvfb works and MT5 is running."
+          echo
+          echo "Xvfb works."
+          echo "Wine prefix works."
+          echo "MT5 terminal64.exe was found."
+          echo "MT5 is running without account login."
