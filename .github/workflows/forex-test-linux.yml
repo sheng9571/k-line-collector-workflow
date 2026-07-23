@@ -692,12 +692,12 @@ jobs:
           INITIAL_PID=$!
 
           echo "$INITIAL_PID" >/tmp/mt5-initial.pid
-          echo "Initial Wine process PID: $INITIAL_PID"
+          echo "Initial Wine PID: $INITIAL_PID"
 
-          # Allow MT5 to finish first-run initialization and LiveUpdate.
+          # Allow the terminal, compiler and LiveUpdate to initialize.
           sleep 45
 
-          echo "=== Visible X11 windows before dialog handling ==="
+          echo "=== Windows before dialog handling ==="
 
           xdotool search \
             --onlyvisible \
@@ -715,79 +715,90 @@ jobs:
             2>>/tmp/screenshot-errors.log || true
 
           # ----------------------------------------------------------
-          # Handle MT5 LiveUpdate restart prompt
+          # Handle the LiveUpdate Restart dialog
           # ----------------------------------------------------------
           #
-          # In the observed LiveUpdate dialog, the Restart button is
-          # focused by default. Pressing Enter accepts the restart.
+          # Wine does not always expose the LiveUpdate dialog as a
+          # separate X11 window. Sending Return to getactivewindow can
+          # therefore target the MT5 parent window instead of Restart.
           #
-          # Because xdotool cannot inspect button text, only send Enter
-          # when the active window appears to belong to MT5.
+          # The Xvfb screen is fixed at 1280x1024. In this layout the
+          # Restart button is centered near x=587, y=574.
           # ----------------------------------------------------------
 
-          ACTIVE_WINDOW="$(
-            xdotool getactivewindow 2>/dev/null || true
-          )"
+          echo "Attempting to click the LiveUpdate Restart button..."
 
-          if [ -n "$ACTIVE_WINDOW" ]; then
-            ACTIVE_NAME="$(
-              xdotool getwindowname "$ACTIVE_WINDOW" 2>/dev/null || true
-            )"
+          xdotool mousemove --sync 587 574 \
+            2>/tmp/xdotool-restart-mousemove-error.log || true
 
-            echo "Active window before LiveUpdate handling:"
-            echo "$ACTIVE_NAME"
+          sleep 1
 
-            if echo "$ACTIVE_NAME" | grep -Eqi \
-              'MetaTrader|LiveUpdate|Update|terminal'
-            then
-              echo "Sending Enter to the active MT5 window..."
+          xdotool click 1 \
+            2>/tmp/xdotool-restart-click-error.log || true
 
-              xdotool windowactivate \
-                --sync \
-                "$ACTIVE_WINDOW" \
-                2>/dev/null || true
+          sleep 5
 
-              sleep 1
+          import \
+            -display "$DISPLAY" \
+            -window root \
+            /tmp/screenshots/99981-after-restart-click.png \
+            2>>/tmp/screenshot-errors.log || true
 
-              xdotool key \
-                --window "$ACTIVE_WINDOW" \
-                Return \
-                2>/tmp/xdotool-liveupdate-enter-error.log || true
-            else
-              echo "Active window does not look like MT5; skipping Enter."
+          # Wait for the original MT5 process to stop.
+          echo "Waiting for MT5 to stop for LiveUpdate..."
+
+          MT5_STOPPED=0
+
+          for ATTEMPT in $(seq 1 30); do
+            if ! pgrep -f 'terminal64.exe' >/dev/null 2>&1; then
+              echo "MT5 stopped after Restart click"
+              MT5_STOPPED=1
+              break
             fi
-          else
-            echo "::warning::Unable to determine the active X11 window"
+
+            echo "Still waiting for MT5 to stop: $ATTEMPT/30"
+            sleep 2
+          done
+
+          if [ "$MT5_STOPPED" -ne 1 ]; then
+            echo "::warning::MT5 did not stop after coordinate click"
+
+            # Fallback: remove --window and send Return to whichever
+            # control currently owns X11 keyboard focus.
+            echo "Trying focused-keyboard fallback..."
+
+            xdotool key Return \
+              2>/tmp/xdotool-restart-return-error.log || true
+
+            sleep 10
           fi
 
-          # Give MT5 time to close and relaunch after LiveUpdate.
-          sleep 10
+          # Wait for MT5 to restart automatically.
+          echo "Waiting for MT5 to restart..."
 
-          echo "Waiting for MT5 process after LiveUpdate..."
+          MT5_RESTARTED=0
 
-          MT5_RUNNING=0
-
-          for ATTEMPT in $(seq 1 90); do
+          for ATTEMPT in $(seq 1 60); do
             MT5_PID="$(
               pgrep -f 'terminal64.exe' |
               head -1
             )"
 
             if [ -n "$MT5_PID" ]; then
-              echo "MT5 process detected after update: PID $MT5_PID"
-              MT5_RUNNING=1
+              echo "MT5 detected after update: PID $MT5_PID"
+              MT5_RESTARTED=1
               break
             fi
 
-            echo "Waiting for MT5 restart... attempt $ATTEMPT/90"
+            echo "Waiting for MT5 restart: $ATTEMPT/60"
             sleep 2
           done
 
-          # Some MT5 updates close the original process but do not relaunch
-          # successfully under Wine. If no process exists, launch it again.
-          if [ "$MT5_RUNNING" -ne 1 ]; then
-            echo "::warning::MT5 did not automatically restart"
-            echo "Starting MT5 again manually..."
+          # LiveUpdate may terminate MT5 without successfully relaunching
+          # it under Wine. Start the terminal manually when necessary.
+          if [ "$MT5_RESTARTED" -ne 1 ]; then
+            echo "::warning::MT5 did not restart automatically"
+            echo "Relaunching MT5 manually..."
 
             RUNNER_TRACKING_ID="" \
             nohup wine "$TERMINAL" \
@@ -795,13 +806,12 @@ jobs:
 
             echo $! >/tmp/mt5-relaunch.pid
 
-            sleep 30
+            sleep 40
           else
-            # Allow the restarted terminal UI to become stable.
-            sleep 25
+            sleep 30
           fi
 
-          echo "=== Visible X11 windows after LiveUpdate handling ==="
+          echo "=== Windows after LiveUpdate handling ==="
 
           xdotool search \
             --onlyvisible \
@@ -815,62 +825,51 @@ jobs:
           import \
             -display "$DISPLAY" \
             -window root \
-            /tmp/screenshots/99981-after-liveupdate.png \
+            /tmp/screenshots/99982-after-liveupdate-handling.png \
             2>>/tmp/screenshot-errors.log || true
 
           # ----------------------------------------------------------
-          # Close the first-run company/account wizard
+          # Close the company/account wizard
           # ----------------------------------------------------------
           #
-          # Do not press Enter here because it may select "Next".
-          # Escape closes the wizard without creating or logging into
-          # an account.
+          # At this point the LiveUpdate modal should be gone.
+          # The company-selection wizard can normally be closed using
+          # Escape. Do not press Return because that would activate Next.
           # ----------------------------------------------------------
 
-          echo "Closing first-run account/company wizard if present..."
+          echo "Closing the account/company wizard..."
 
-          for ATTEMPT in $(seq 1 3); do
-            ACTIVE_WINDOW="$(
-              xdotool getactivewindow 2>/dev/null || true
-            )"
+          # Focus the MT5 window first.
+          MT5_WINDOW="$(
+            xdotool search \
+              --onlyvisible \
+              --name 'MetaTrader|MetaTrader 5' \
+              2>/dev/null |
+              tail -1
+          )"
 
-            if [ -z "$ACTIVE_WINDOW" ]; then
-              echo "No active window found on attempt $ATTEMPT"
-              break
-            fi
+          if [ -n "$MT5_WINDOW" ]; then
+            echo "Activating MT5 window: $MT5_WINDOW"
 
-            ACTIVE_NAME="$(
-              xdotool getwindowname "$ACTIVE_WINDOW" 2>/dev/null || true
-            )"
+            xdotool windowactivate --sync "$MT5_WINDOW" \
+              2>/tmp/xdotool-windowactivate-error.log || true
 
-            echo "Active window before Escape $ATTEMPT:"
-            echo "$ACTIVE_NAME"
+            sleep 2
+          fi
 
-            if echo "$ACTIVE_NAME" | grep -Eqi \
-              'MetaTrader|terminal'
-            then
-              xdotool windowactivate \
-                --sync \
-                "$ACTIVE_WINDOW" \
-                2>/dev/null || true
+          # Send Escape to the currently focused Wine control.
+          xdotool key Escape \
+            2>/tmp/xdotool-wizard-escape-error.log || true
 
-              sleep 1
+          sleep 8
 
-              xdotool key \
-                --window "$ACTIVE_WINDOW" \
-                Escape \
-                2>>/tmp/xdotool-wizard-escape-error.log || true
+          import \
+            -display "$DISPLAY" \
+            -window root \
+            /tmp/screenshots/99983-after-wizard-escape.png \
+            2>>/tmp/screenshot-errors.log || true
 
-              sleep 3
-            else
-              echo "Active window does not look like MT5; stopping Escape loop."
-              break
-            fi
-          done
-
-          sleep 10
-
-          echo "=== Final visible X11 windows ==="
+          echo "=== Final visible windows ==="
 
           xdotool search \
             --onlyvisible \
@@ -881,7 +880,7 @@ jobs:
 
           cat /tmp/x11-window-names-final.txt || true
 
-          echo "=== MT5 and Wine processes ==="
+          echo "=== Final MT5/Wine processes ==="
 
           pgrep -af \
             'terminal64.exe|terminal.exe|MetaTrader|metatrader|wine|wineserver' \
@@ -899,7 +898,6 @@ jobs:
 
             echo "$MT5_PID" >/tmp/mt5-running.pid
             echo "running" >/tmp/mt5-launch-status
-
             touch /tmp/mt5-opened-ok
           else
             echo "::warning::terminal64.exe process was not found"
@@ -909,10 +907,10 @@ jobs:
           import \
             -display "$DISPLAY" \
             -window root \
-            /tmp/screenshots/99982-mt5-ready-for-ipc.png \
+            /tmp/screenshots/99984-mt5-ready-for-ipc.png \
             2>>/tmp/screenshot-errors.log || true
 
-          # Do not fail here. IPC testing and artifact upload must continue.
+          # Do not fail before IPC testing and artifact upload.
           exit 0
 
       # ============================================================
@@ -1277,6 +1275,10 @@ jobs:
             /tmp/xdotool-liveupdate-enter-error.log
             /tmp/xdotool-wizard-escape-error.log
             /tmp/mt5-relaunch.pid
+            /tmp/xdotool-restart-mousemove-error.log
+            /tmp/xdotool-restart-click-error.log
+            /tmp/xdotool-restart-return-error.log
+            /tmp/xdotool-windowactivate-error.log
           if-no-files-found: warn
           retention-days: 3
 
