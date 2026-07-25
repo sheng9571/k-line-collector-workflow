@@ -95,7 +95,7 @@ jobs:
             -d "secret=$NOVNC_URL" \
             -d "passphrase=$OTS_PASSPHRASE" \
             -d "ttl=1800" \
-            https://onetimesecret.com/api/v1/share)
+            https://eu.onetimesecret.com/api/v1/share)
 
           echo "OTS API raw response:"
           echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
@@ -108,7 +108,18 @@ jobs:
             exit 1
           fi
 
-          OTS_LINK="https://onetimesecret.com/secret/$SECRET_KEY"
+          # Detect OTS domain from API response (eu vs global)
+          OTS_DOMAIN=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          url = data.get('metadata_url', '')
+          if 'eu.onetimesecret.com' in url:
+              print('eu.onetimesecret.com')
+          else:
+              print('onetimesecret.com')
+          " 2>/dev/null || echo "onetimesecret.com")
+
+          OTS_LINK="https://${OTS_DOMAIN}/secret/$SECRET_KEY"
 
           echo ""
           echo "========================================================"
