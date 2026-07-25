@@ -80,7 +80,6 @@ jobs:
 
           NOVNC_URL="${TUNNEL_URL}/vnc.html"
           echo "NOVNC_URL=$NOVNC_URL" >> $GITHUB_ENV
-          echo "Tunnel URL: $NOVNC_URL"
 
       - name: Publish noVNC URL via OneTimeSecret
         env:
@@ -88,17 +87,12 @@ jobs:
           OTS_API_KEY: ${{ secrets.OTS_API_KEY }}
           OTS_PASSPHRASE: ${{ secrets.OTS_PASSPHRASE }}
         run: |
-          echo "Creating OTS secret for: $NOVNC_URL"
-
           RESPONSE=$(curl -s -X POST \
             -u "${OTS_USERNAME}:${OTS_API_KEY}" \
             -d "secret=$NOVNC_URL" \
             -d "passphrase=$OTS_PASSPHRASE" \
             -d "ttl=1800" \
             https://eu.onetimesecret.com/api/v1/share)
-
-          echo "OTS API raw response:"
-          echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
 
           SECRET_KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('secret_key',''))" 2>/dev/null || echo "")
 
