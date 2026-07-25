@@ -88,6 +88,8 @@ jobs:
           OTS_API_KEY: ${{ secrets.OTS_API_KEY }}
           OTS_PASSPHRASE: ${{ secrets.OTS_PASSPHRASE }}
         run: |
+          echo "Creating OTS secret for: $NOVNC_URL"
+
           RESPONSE=$(curl -s -X POST \
             -u "${OTS_USERNAME}:${OTS_API_KEY}" \
             -d "secret=$NOVNC_URL" \
@@ -95,11 +97,14 @@ jobs:
             -d "ttl=1800" \
             https://onetimesecret.com/api/v1/share)
 
-          SECRET_KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('secret_key',''))")
+          echo "OTS API raw response:"
+          echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
+
+          SECRET_KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('secret_key',''))" 2>/dev/null || echo "")
 
           if [ -z "$SECRET_KEY" ]; then
-            echo "::error::Failed to create OTS secret"
-            echo "$RESPONSE"
+            echo "::error::Failed to create OTS secret. secret_key is empty."
+            echo "::error::Check OTS_USERNAME and OTS_API_KEY secrets."
             exit 1
           fi
 
