@@ -15,141 +15,10 @@ jobs:
 
     steps:
       - name: Checkout mt5-local-test
-        uses: actions/checkout@v4
-        with:
-          repository: sheng9571/k-line-collector
-          token: ${{ secrets.K_LINE_COLLECTOR_PAT }}
-          sparse-checkout: mt5-local-test
-          path: collector
-
-      - name: Generate t5.py with secrets
         run: |
-          cat > /tmp/t5.py << 'PYTHON'
-          from datetime import datetime, timezone
-          import os
-          import sys
-          import time
-
-          import MetaTrader5 as mt5
-
-          MT5_PATH = r"C:\Program Files\MetaTrader 5\terminal64.exe"
-
-          LOGIN = int(os.environ["MT5_LOGIN"])
-          PASSWORD = os.environ["MT5_PASSWORD"]
-          SERVER = os.environ["MT5_SERVER"]
-
-          SYMBOL = "GBPJPY"
-          REQUEST_SIZES = (100000, 90000, 80000, 70000, 60000, 50000, 10000, 5000, 3000, 2000, 1500, 1000, 500, 100, 10)
-          MAX_RETRIES = 3
-          RETRY_SECONDS = 1
-
-
-          def format_time(timestamp):
-              return datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
-          def connect_mt5():
-              if not mt5.initialize(
-                  path=MT5_PATH,
-                  login=LOGIN,
-                  password=PASSWORD,
-                  server=SERVER,
-                  timeout=60_000,
-              ):
-                  raise RuntimeError(f"initialize failed: {mt5.last_error()}")
-
-              account = mt5.account_info()
-              if account is None:
-                  raise RuntimeError(f"account_info failed: {mt5.last_error()}")
-
-              terminal = mt5.terminal_info()
-              if terminal is None:
-                  raise RuntimeError(f"terminal_info failed: {mt5.last_error()}")
-
-              print(f"Login successful: login={account.login}, server={account.server}", file=sys.stderr)
-              print(f"Terminal connected={terminal.connected}", file=sys.stderr)
-
-
-          def prepare_symbol(symbol):
-              info = mt5.symbol_info(symbol)
-              if info is None:
-                  raise RuntimeError(f"symbol_info({symbol}) failed: {mt5.last_error()}")
-
-              if not mt5.symbol_select(symbol, True):
-                  raise RuntimeError(f"symbol_select({symbol}) failed: {mt5.last_error()}")
-
-              tick = mt5.symbol_info_tick(symbol)
-              if tick is None:
-                  raise RuntimeError(f"symbol_info_tick({symbol}) failed: {mt5.last_error()}")
-
-              print(f"Tick OK: bid={tick.bid}, ask={tick.ask}", file=sys.stderr)
-
-
-          def request_rates(symbol, count):
-              for attempt in range(1, MAX_RETRIES + 1):
-                  rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M1, 0, count)
-                  if rates is not None and len(rates) > 0:
-                      return rates
-                  print(f"Request failed: count={count}, attempt={attempt}/{MAX_RETRIES}, error={mt5.last_error()}", file=sys.stderr)
-                  time.sleep(RETRY_SECONDS)
-              return None
-
-
-          def get_bars(symbol):
-              for count in REQUEST_SIZES:
-                  print(f"Trying {count} bars...", file=sys.stderr)
-                  rates = request_rates(symbol, count)
-                  if rates is not None:
-                      print(f"Got {len(rates)} bars (requested {count})", file=sys.stderr)
-                      return rates
-              raise RuntimeError(f"All requests failed. Last error: {mt5.last_error()}")
-
-
-          def print_bars(rates):
-              print(f"{'time':<20}{'open':>12}{'high':>12}{'low':>12}{'close':>12}")
-              print("-" * 68)
-              for rate in rates[-10:]:
-                  print(f"{format_time(rate['time']):<20}{rate['open']:>12.5f}{rate['high']:>12.5f}{rate['low']:>12.5f}{rate['close']:>12.5f}")
-              print("-" * 68)
-              print(f"Total bars: {len(rates)}")
-
-
-          def main():
-              try:
-                  connect_mt5()
-                  prepare_symbol(SYMBOL)
-                  rates = get_bars(SYMBOL)
-                  print_bars(rates)
-                  return 0
-              except Exception as e:
-                  print(f"Error: {e}", file=sys.stderr)
-                  return 1
-              finally:
-                  mt5.shutdown()
-
-
-          if __name__ == "__main__":
-              raise SystemExit(main())
-          PYTHON
-
-          echo "t5.py generated (uses env vars for credentials)"
-
-      - name: Prepare xterm auto-respawn script
-        run: |
-          cat > /tmp/xterm-loop.sh << 'SCRIPT'
-          #!/bin/sh
-          sleep 5
-          while true; do
-            if ! pgrep -x xterm >/dev/null; then
-              xterm -geometry 120x30+0+0 &
-              sleep 2
-              wmctrl -r xterm -b add,above 2>/dev/null || true
-            fi
-            sleep 3
-          done
-          SCRIPT
-          chmod +x /tmp/xterm-loop.sh
-          echo "xterm auto-respawn script ready"
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git \
+            collector
 
       - name: Build Docker image
         working-directory: collector/mt5-local-test
@@ -166,19 +35,10 @@ jobs:
             -e MT5_LOGIN=${{ secrets.MT5_LOGIN }} \
             -e MT5_PASSWORD=${{ secrets.MT5_PASSWORD }} \
             -e MT5_SERVER=${{ secrets.MT5_SERVER }} \
-            -v /tmp/t5.py:/opt/t5-secrets.py:ro \
-            -v /tmp/xterm-loop.sh:/usr/local/bin/xterm-loop.sh:ro \
             mt5-poc
 
           echo "Container started. Waiting for noVNC..."
           sleep 10
-
-          # Install xterm inside container (not in base image)
-          docker exec mt5-poc apt-get update -qq
-          docker exec mt5-poc apt-get install -y -qq xterm
-
-          # Start xterm loop inside container
-          docker exec -d mt5-poc /usr/local/bin/xterm-loop.sh
 
           # Verify noVNC is responding
           for i in $(seq 1 12); do
@@ -257,7 +117,7 @@ jobs:
           echo " Then open the noVNC URL in your browser."
           echo ""
           echo " Inside noVNC, use xterm to run:"
-          echo "   wine /root/.wine/drive_c/Python312/python.exe /opt/t5-secrets.py"
+          echo "   wine /root/.wine/drive_c/Python312/python.exe /opt/t5.py"
           echo ""
           echo "========================================================"
 
