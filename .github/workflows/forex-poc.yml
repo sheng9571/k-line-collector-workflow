@@ -7,6 +7,13 @@ on:
         description: 'Minutes to keep runner alive for noVNC access'
         required: false
         default: '45'
+      broker:
+        description: 'Broker to use (empty = all brokers)'
+        required: false
+        default: ''
+
+env:
+  HF_REPO: "sheng9571/kline-forex"
 
 jobs:
   mt5-poc:
@@ -14,16 +21,16 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      - name: Checkout mt5-local-test
+      - name: Clone collector repo
         run: |
           git clone --depth 1 \
             https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git \
             collector
 
       - name: Build Docker image
-        working-directory: collector/mt5-local-test
+        working-directory: collector/forex/docker
         run: |
-          docker build -t mt5-poc .
+          docker build -t forex-mt5 .
 
       - name: Start container
         run: |
@@ -32,10 +39,15 @@ jobs:
             --shm-size=1g \
             -p 6080:6080 \
             -e DISPLAY=:99 \
-            -e MT5_LOGIN=${{ secrets.MT5_LOGIN }} \
-            -e MT5_PASSWORD=${{ secrets.MT5_PASSWORD }} \
-            -e MT5_SERVER=${{ secrets.MT5_SERVER }} \
-            mt5-poc
+            -e RUN_MODE=interactive \
+            -e MT5_BROKER=${{ inputs.broker }} \
+            -e SOPS_AGE_KEY=${{ secrets.SOPS_AGE_KEY }} \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_REPO=${{ env.HF_REPO }} \
+            -e FALLBACK_REPO_OWNER=${{ github.repository_owner }} \
+            -v ${{ github.workspace }}/collector/forex/credentials.enc.yaml:/opt/forex/credentials.enc.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/brokers.yaml:/opt/forex/brokers.yaml:ro \
+            forex-mt5
 
           echo "Container started. Waiting for noVNC..."
           sleep 10
@@ -126,8 +138,8 @@ jobs:
           echo " Open the OTS link, enter passphrase, get noVNC URL."
           echo " Then open the noVNC URL in your browser."
           echo ""
-          echo " Inside noVNC, use xterm to run:"
-          echo "   wine /root/.wine/drive_c/Python312/python.exe /opt/t5.py"
+          echo " Credentials are auto-decrypted from SOPS."
+          echo " Use xterm to run collector or test scripts."
           echo ""
           echo "========================================================"
 
