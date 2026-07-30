@@ -16,6 +16,8 @@ jobs:
   test-mt5-docker:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    permissions:
+      contents: write  # Required for creating releases and uploading assets
 
     steps:
       # ============================================================
