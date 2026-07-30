@@ -16,8 +16,6 @@ jobs:
   test-mt5-docker:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    permissions:
-      contents: write  # Required for creating releases and uploading assets
 
     steps:
       # ============================================================
@@ -191,23 +189,25 @@ jobs:
 
       - name: Test MT5 connections
         run: |
-          echo "Waiting for MT5 installation to complete..."
+          echo "Waiting for container services to start..."
+          sleep 30  # Wait for Xvfb and VNC to start
 
-          # Wait for entrypoint to finish (check for Installation Summary in logs)
-          for i in $(seq 1 90); do
-            if docker logs mt5-test 2>&1 | grep -q "Installation Summary"; then
-              echo "Installation complete!"
-              break
-            fi
-            echo "Waiting for installation... attempt $i/90"
-            sleep 10
-          done
+          # Verify MT5 terminals are pre-installed (build time)
+          echo "Verifying MT5 installation..."
+          docker exec mt5-test bash -c '
+            echo "Python version:"
+            wine /root/.wine/drive_c/Python312/python.exe --version
 
-          # Verify at least one MT5 terminal is installed
-          if ! docker exec mt5-test bash -c 'ls /opt/mt5/*/terminal-unix-path 2>/dev/null | head -1' | grep -q terminal; then
-            echo "::warning::No MT5 terminals found, skipping test"
-            exit 0
-          fi
+            echo ""
+            echo "MT5 Terminals:"
+            for broker in metaquotes pepperstone capitalcom; do
+              if [ -f "/opt/mt5/${broker}/terminal-unix-path" ]; then
+                echo "  $broker: $(cat /opt/mt5/${broker}/terminal-unix-path)"
+              else
+                echo "  $broker: NOT FOUND"
+              fi
+            done
+          '
 
           # Check if test script exists
           if ! docker exec mt5-test test -f /opt/forex/src/test_mt5.py 2>/dev/null; then
@@ -215,6 +215,7 @@ jobs:
             exit 0
           fi
 
+          echo ""
           echo "Running MT5 connection tests..."
 
           # Run test with:
@@ -223,6 +224,7 @@ jobs:
           docker exec mt5-test bash -c '
             source /usr/local/bin/decrypt-credentials.sh
             wine /root/.wine/drive_c/Python312/python.exe "Z:\\opt\\forex\\src\\test_mt5.py"
+            wineserver -k || true
           ' || true
 
           # Copy test results
@@ -250,64 +252,6 @@ jobs:
           echo "You can now connect via noVNC."
           sleep $((MINUTES * 60))
           echo "Keep alive timeout reached."
-
-      # ============================================================
-      # Upload installers to release (if downloaded from CDN)
-      # ============================================================
-
-      - name: Upload installers to release
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Copy files from container
-          docker cp mt5-test:/tmp/cdn-downloaded.txt ./cdn-downloaded.txt 2>/dev/null || true
-          docker cp mt5-test:/opt/installers ./installers 2>/dev/null || true
-
-          if [ ! -s ./cdn-downloaded.txt ]; then
-            echo "No new CDN downloads to upload"
-            exit 0
-          fi
-
-          echo "Files downloaded from CDN:"
-          cat ./cdn-downloaded.txt
-
-          # Check if release exists, create if not
-          if ! gh release view mt5-installers --repo ${{ github.repository }} &>/dev/null; then
-            echo "Creating mt5-installers release..."
-            gh release create mt5-installers \
-              --repo ${{ github.repository }} \
-              --title "MT5 Installers" \
-              --notes "Fallback installers for MT5 brokers. Auto-updated by forex workflow."
-          fi
-
-          # Generate checksums
-          echo "Generating checksums..."
-          cd ./installers
-          sha256sum *.exe > checksums.txt 2>/dev/null || true
-          cd ..
-
-          # Upload each file
-          while IFS= read -r filename; do
-            if [ -f "./installers/$filename" ]; then
-              echo "Uploading $filename..."
-              gh release upload mt5-installers \
-                "./installers/$filename" \
-                --clobber \
-                --repo ${{ github.repository }} || true
-            fi
-          done < ./cdn-downloaded.txt
-
-          # Upload checksums
-          if [ -f ./installers/checksums.txt ]; then
-            echo "Uploading checksums.txt..."
-            gh release upload mt5-installers \
-              ./installers/checksums.txt \
-              --clobber \
-              --repo ${{ github.repository }} || true
-          fi
-
-          echo "Upload complete."
 
       # ============================================================
       # Cleanup
