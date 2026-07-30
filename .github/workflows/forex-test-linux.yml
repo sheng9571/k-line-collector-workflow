@@ -189,18 +189,23 @@ jobs:
 
       - name: Test MT5 connections
         run: |
-          echo "Running MT5 connection tests..."
-
-          # Wait for MT5 installation to complete (entrypoint.sh runs async)
           echo "Waiting for MT5 installation to complete..."
-          for i in $(seq 1 60); do
-            if docker exec mt5-test test -f /opt/mt5/python-unix-path 2>/dev/null; then
-              echo "Python installed, checking for MT5 terminals..."
+
+          # Wait for entrypoint to finish (check for Installation Summary in logs)
+          for i in $(seq 1 90); do
+            if docker logs mt5-test 2>&1 | grep -q "Installation Summary"; then
+              echo "Installation complete!"
               break
             fi
-            echo "Waiting for installation... attempt $i/60"
+            echo "Waiting for installation... attempt $i/90"
             sleep 10
           done
+
+          # Verify at least one MT5 terminal is installed
+          if ! docker exec mt5-test bash -c 'ls /opt/mt5/*/terminal-unix-path 2>/dev/null | head -1' | grep -q terminal; then
+            echo "::warning::No MT5 terminals found, skipping test"
+            exit 0
+          fi
 
           # Check if test script exists
           if ! docker exec mt5-test test -f /opt/forex/src/test_mt5.py 2>/dev/null; then
@@ -208,19 +213,15 @@ jobs:
             exit 0
           fi
 
-          # Get Windows Python path
-          WIN_PYTHON=$(docker exec mt5-test cat /opt/mt5/python-unix-path 2>/dev/null || echo "")
+          echo "Running MT5 connection tests..."
 
-          if [ -z "$WIN_PYTHON" ]; then
-            echo "::warning::Windows Python not installed, skipping MT5 connection test"
-            exit 0
-          fi
-
-          echo "Windows Python: $WIN_PYTHON"
-
-          # Run test with Windows Python (Wine)
-          # Z: drive maps to Linux root, so /opt/forex/src -> Z:\opt\forex\src
-          docker exec mt5-test bash -c "$WIN_PYTHON 'Z:\\opt\\forex\\src\\test_mt5.py'" || true
+          # Run test with:
+          # 1. source decrypt-credentials.sh to get MT5_*_LOGIN/PASSWORD env vars
+          # 2. wine to execute Windows Python
+          docker exec mt5-test bash -c '
+            source /usr/local/bin/decrypt-credentials.sh
+            wine /root/.wine/drive_c/Python312/python.exe "Z:\\opt\\forex\\src\\test_mt5.py"
+          ' || true
 
           # Copy test results
           docker cp mt5-test:/tmp/test_mt5_results.json ./test_results.json 2>/dev/null || true
