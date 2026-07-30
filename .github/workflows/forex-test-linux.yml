@@ -1,1474 +1,368 @@
-name: Forex Test Linux - MT5 IPC via Wine
+name: Forex Test Linux - MT5 Docker
 
 on:
   workflow_dispatch:
+    inputs:
+      keep_alive_minutes:
+        description: 'Minutes to keep runner alive for noVNC access'
+        required: false
+        default: '45'
+      broker:
+        description: 'Broker to use (empty = all brokers)'
+        required: false
+        default: ''
 
 jobs:
-  test-mt5-wine:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-
-    env:
-      DISPLAY: ":99"
-      WINEPREFIX: "/home/runner/.mt5"
-      WINEARCH: "win64"
-      WINEDEBUG: "-all"
-      DEBIAN_FRONTEND: "noninteractive"
-      NEEDRESTART_MODE: "a"
-      PYTHON_VERSION: "3.12.10"
+  test-mt5-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       # ============================================================
-      # Runner information
+      # Free disk space
       # ============================================================
 
-      - name: Show runner information
+      - name: Free disk space
         run: |
-          set -euxo pipefail
-
-          cat /etc/os-release
-          uname -a
-
-          echo "HOME=$HOME"
-          echo "DISPLAY=$DISPLAY"
-          echo "WINEPREFIX=$WINEPREFIX"
-          echo "WINEARCH=$WINEARCH"
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af || true
+          docker builder prune -af || true
+          df -h
+          docker system df || true
 
       # ============================================================
-      # Linux dependencies
+      # Checkout workflow repo
       # ============================================================
 
-      - name: Install Xvfb and utilities
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # Clone collector repo (for volume mounts)
+      # ============================================================
+
+      - name: Clone collector repo
         run: |
-          set -euxo pipefail
-
-          sudo apt-get update
-
-          sudo apt-get install -y --no-install-recommends \
-            xvfb \
-            x11-utils \
-            xdotool \
-            imagemagick \
-            procps \
-            psmisc \
-            wget \
-            curl \
-            ca-certificates \
-            gnupg \
-            file \
-            xxd
-
-          command -v Xvfb
-          command -v xdpyinfo
-          command -v xdotool
-          command -v import
-          command -v curl
-          command -v wget
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git \
+            collector
 
       # ============================================================
-      # Xvfb
+      # Login to ghcr.io and pull image
       # ============================================================
 
-      - name: Start and verify Xvfb
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull Docker image
         run: |
-          set -euxo pipefail
-
-          mkdir -p /tmp/screenshots
-
-          RUNNER_TRACKING_ID="" \
-          nohup Xvfb "$DISPLAY" \
-            -screen 0 1280x1024x24 \
-            -nolisten tcp \
-            -ac \
-            >/tmp/xvfb.log 2>&1 &
-
-          echo $! >/tmp/xvfb.pid
-
-          sleep 3
-
-          XVFB_PID="$(cat /tmp/xvfb.pid)"
-
-          if ! kill -0 "$XVFB_PID" 2>/dev/null; then
-            echo "::error::Xvfb exited unexpectedly"
-            cat /tmp/xvfb.log || true
-            exit 1
-          fi
-
-          xdpyinfo \
-            -display "$DISPLAY" \
-            >/tmp/xdpyinfo.log
-
-          grep -E \
-            'name of display|dimensions|depth of root window' \
-            /tmp/xdpyinfo.log || true
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/00000-xvfb-test.png
-
-          test -s /tmp/screenshots/00000-xvfb-test.png
-
-          touch /tmp/xvfb-ok
-
-          echo "Xvfb is working on $DISPLAY"
+          docker pull ghcr.io/sheng9571/k-line-collector/forex-mt5:latest
+          docker tag ghcr.io/sheng9571/k-line-collector/forex-mt5:latest forex-mt5:latest
 
       # ============================================================
-      # Background screenshots
+      # Start container
       # ============================================================
 
-      - name: Start background screenshots
-        if: always()
+      - name: Start container
         run: |
-          set -euxo pipefail
+          docker run -d \
+            --name mt5-test \
+            --shm-size=1g \
+            -p 6080:6080 \
+            -e DISPLAY=:99 \
+            -e RUN_MODE=interactive \
+            -e MT5_BROKER=${{ inputs.broker }} \
+            -e SOPS_AGE_KEY=${{ secrets.SOPS_AGE_KEY }} \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e FALLBACK_REPO_OWNER=${{ github.repository_owner }} \
+            -v ${{ github.workspace }}/collector/forex/credentials.enc.yaml:/opt/forex/credentials.enc.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/brokers.yaml:/opt/forex/brokers.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/src:/opt/forex/src:ro \
+            forex-mt5:latest
 
-          mkdir -p /tmp/screenshots
-
-          cat >/tmp/screenshot-loop.sh <<'SCRIPT'
-          #!/usr/bin/env bash
-
-          set +e
-
-          INDEX=1
-          MAX=1200
-
-          while [ "$INDEX" -le "$MAX" ]; do
-            TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
-            FILENAME="$(printf '%05d-%s.png' "$INDEX" "$TIMESTAMP")"
-
-            import \
-              -display "${DISPLAY:-:99}" \
-              -window root \
-              "/tmp/screenshots/$FILENAME" \
-              2>>/tmp/screenshot-errors.log
-
-            INDEX=$((INDEX + 1))
-            sleep 2
-          done
-          SCRIPT
-
-          chmod +x /tmp/screenshot-loop.sh
-
-          RUNNER_TRACKING_ID="" \
-          nohup /tmp/screenshot-loop.sh \
-            >/tmp/screenshot-stdout.log 2>&1 &
-
-          echo $! >/tmp/screenshot.pid
-
-          sleep 4
-
-          SCREENSHOT_PID="$(cat /tmp/screenshot.pid)"
-
-          if kill -0 "$SCREENSHOT_PID" 2>/dev/null; then
-            echo "Screenshot loop is running with PID $SCREENSHOT_PID"
-          else
-            echo "::warning::Screenshot loop exited unexpectedly"
-            cat /tmp/screenshot-stdout.log || true
-            cat /tmp/screenshot-errors.log || true
-          fi
-
-      # ============================================================
-      # Official MetaQuotes installer script
-      # ============================================================
-
-      - name: Download official MT5 Linux script
-        run: |
-          set -euxo pipefail
-
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --connect-timeout 30 \
-            "https://download.terminal.free/cdn/web/metaquotes.software.corp/mt5/mt5linux.sh" \
-            --output /tmp/mt5linux.sh
-
-          chmod +x /tmp/mt5linux.sh
-
-          test -s /tmp/mt5linux.sh
-
-          sha256sum /tmp/mt5linux.sh \
-            >/tmp/mt5linux-sha256.txt
-
-          grep -nE \
-            'URL_MT5|URL_WEBVIEW|WINE_VERSION|winehq|WINEPREFIX|winecfg|webview2|mt5setup' \
-            /tmp/mt5linux.sh || true
-
-      # ============================================================
-      # WineHQ staging
-      # ============================================================
-
-      - name: Install WineHQ staging
-        run: |
-          set -euxo pipefail
-
-          sudo dpkg --add-architecture i386
-          sudo mkdir -pm755 /etc/apt/keyrings
-
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            "https://dl.winehq.org/wine-builds/winehq.key" |
-            sudo gpg \
-              --dearmor \
-              --yes \
-              --output /etc/apt/keyrings/winehq-archive.key
-
-          sudo wget \
-            -NP /etc/apt/sources.list.d/ \
-            "https://dl.winehq.org/wine-builds/ubuntu/dists/noble/winehq-noble.sources"
-
-          sudo apt-get update
-
-          sudo apt-get install -y --install-recommends \
-            winehq-staging
-
-          command -v wine
-          command -v wineboot
-          command -v winecfg
-          command -v wineserver
-          command -v winepath
-
-          wine --version |
-            tee /tmp/wine-version.txt
-
-          touch /tmp/wine-installed-ok
-
-      # ============================================================
-      # Wine prefix
-      # ============================================================
-
-      - name: Initialize clean Wine prefix
-        env:
-          WINEDLLOVERRIDES: "mscoree,mshtml="
-        run: |
-          set -euxo pipefail
-
-          wineserver -k || true
-          sleep 2
-
-          rm -rf "$WINEPREFIX"
-          mkdir -p "$WINEPREFIX"
-
-          set +e
-
-          timeout \
-            --signal=TERM \
-            --kill-after=20s \
-            180s \
-            wineboot --init \
-            > >(tee /tmp/wineboot.log) \
-            2> >(tee /tmp/wineboot-error.log >&2)
-
-          WINEBOOT_EXIT=$?
-
-          set -e
-
-          echo "$WINEBOOT_EXIT" \
-            >/tmp/wineboot-exit-code
-
+          echo "Container started. Waiting for noVNC..."
           sleep 10
 
-          test -f "$WINEPREFIX/system.reg"
-          test -f "$WINEPREFIX/user.reg"
-          test -d "$WINEPREFIX/drive_c/windows/system32"
-
-          timeout \
-            --signal=TERM \
-            --kill-after=15s \
-            60s \
-            winecfg -v=win11 \
-            > >(tee /tmp/winecfg.log) \
-            2> >(tee /tmp/winecfg-error.log >&2) ||
-            true
-
-          sleep 5
-
-          timeout \
-            --signal=TERM \
-            --kill-after=15s \
-            60s \
-            wine cmd /c ver \
-            > >(tee /tmp/wine-cmd.log) \
-            2> >(tee /tmp/wine-cmd-error.log >&2)
-
-          touch /tmp/wine-prefix-ok
-
-      # ============================================================
-      # Download installers
-      # ============================================================
-
-      - name: Download WebView2 and MT5 installers
-        run: |
-          set -euxo pipefail
-
-          WEBVIEW_URL="$(
-            sed -n \
-              's/^URL_WEBVIEW="\([^"]*\)".*/\1/p' \
-              /tmp/mt5linux.sh |
-              head -1
-          )"
-
-          MT5_URL="$(
-            sed -n \
-              's/^URL_MT5="\([^"]*\)".*/\1/p' \
-              /tmp/mt5linux.sh |
-              head -1
-          )"
-
-          if [ -z "$WEBVIEW_URL" ]; then
-            echo "::error::Unable to read WebView2 URL"
-            exit 1
-          fi
-
-          if [ -z "$MT5_URL" ]; then
-            echo "::error::Unable to read MT5 URL"
-            exit 1
-          fi
-
-          printf '%s\n' "$WEBVIEW_URL" >/tmp/webview-url.txt
-          printf '%s\n' "$MT5_URL" >/tmp/mt5-url.txt
-
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --connect-timeout 30 \
-            "$WEBVIEW_URL" \
-            --output /tmp/webview2.exe
-
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --connect-timeout 30 \
-            "$MT5_URL" \
-            --output /tmp/mt5setup.exe
-
-          test -s /tmp/webview2.exe
-          test -s /tmp/mt5setup.exe
-
-          if [ "$(xxd -l 2 -p /tmp/webview2.exe)" != "4d5a" ]; then
-            echo "::error::WebView2 installer is not a PE file"
-            exit 1
-          fi
-
-          if [ "$(xxd -l 2 -p /tmp/mt5setup.exe)" != "4d5a" ]; then
-            echo "::error::MT5 installer is not a PE file"
-            exit 1
-          fi
-
-          ls -lh \
-            /tmp/webview2.exe \
-            /tmp/mt5setup.exe
-
-      # ============================================================
-      # WebView2
-      # ============================================================
-
-      - name: Install WebView2
-        continue-on-error: true
-        run: |
-          set +e
-
-          timeout \
-            --signal=TERM \
-            --kill-after=30s \
-            420s \
-            wine /tmp/webview2.exe /silent /install \
-            > >(tee /tmp/webview2-install.log) \
-            2> >(tee /tmp/webview2-install-error.log >&2)
-
-          WEBVIEW_EXIT=$?
-
-          echo "$WEBVIEW_EXIT" \
-            >/tmp/webview2-exit-code
-
-          echo "WebView2 exit code: $WEBVIEW_EXIT"
-
-          sleep 15
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/90001-after-webview2.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          exit 0
-
-      # ============================================================
-      # MT5 installation
-      # ============================================================
-
-      - name: Install MT5
-        continue-on-error: true
-        run: |
-          set +e
-
-          timeout \
-            --signal=TERM \
-            --kill-after=30s \
-            600s \
-            wine /tmp/mt5setup.exe /auto \
-            > >(tee /tmp/mt5-install.log) \
-            2> >(tee /tmp/mt5-install-error.log >&2)
-
-          MT5_INSTALL_EXIT=$?
-
-          echo "$MT5_INSTALL_EXIT" \
-            >/tmp/mt5-install-exit-code
-
-          echo "MT5 installer exit code: $MT5_INSTALL_EXIT"
-
-          sleep 20
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/90002-after-mt5-install.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          exit 0
-
-      # ============================================================
-      # Find terminal64.exe
-      # ============================================================
-
-      - name: Find installed MT5 terminal
-        if: always()
-        run: |
-          set +e
-
-          TERMINAL="$(
-            find "$WINEPREFIX/drive_c" \
-              -type f \
-              -iname 'terminal64.exe' \
-              -print \
-              -quit \
-              2>/dev/null
-          )"
-
-          if [ -z "$TERMINAL" ]; then
-            echo "::warning::terminal64.exe was not found"
-            echo "not-found" >/tmp/mt5-terminal-status
-
-            find "$WINEPREFIX/drive_c" \
-              -type f \
-              -iname '*.exe' \
-              2>/dev/null |
-              head -300 \
-              >/tmp/wine-prefix-executables.txt || true
-
-            exit 0
-          fi
-
-          printf '%s\n' \
-            "$TERMINAL" \
-            >/tmp/mt5-terminal-path
-
-          TERMINAL_WINDOWS_PATH="$(
-            winepath -w "$TERMINAL" 2>/dev/null
-          )"
-
-          printf '%s\n' \
-            "$TERMINAL_WINDOWS_PATH" \
-            >/tmp/mt5-terminal-windows-path
-
-          echo "Linux path: $TERMINAL"
-          echo "Windows path: $TERMINAL_WINDOWS_PATH"
-
-          echo "found" >/tmp/mt5-terminal-status
-
-      # ============================================================
-      # Windows Python
-      # ============================================================
-
-      - name: Install Windows Python
-        if: always()
-        continue-on-error: true
-        run: |
-          set +e
-
-          PYTHON_INSTALLER="python-${PYTHON_VERSION}-amd64.exe"
-          PYTHON_URL="https://www.python.org/ftp/python/${PYTHON_VERSION}/${PYTHON_INSTALLER}"
-
-          curl \
-            --fail \
-            --location \
-            --retry 3 \
-            --connect-timeout 30 \
-            "$PYTHON_URL" \
-            --output "/tmp/${PYTHON_INSTALLER}"
-
-          DOWNLOAD_EXIT=$?
-
-          if [ "$DOWNLOAD_EXIT" -ne 0 ]; then
-            echo "::error::Unable to download Windows Python"
-            exit 0
-          fi
-
-          if [ "$(xxd -l 2 -p "/tmp/${PYTHON_INSTALLER}")" != "4d5a" ]; then
-            echo "::error::Python installer is not a PE file"
-            exit 0
-          fi
-
-          timeout \
-            --signal=TERM \
-            --kill-after=30s \
-            420s \
-            wine "/tmp/${PYTHON_INSTALLER}" \
-              /quiet \
-              InstallAllUsers=0 \
-              Include_launcher=0 \
-              Include_test=0 \
-              PrependPath=1 \
-            > >(tee /tmp/python-install.log) \
-            2> >(tee /tmp/python-install-error.log >&2)
-
-          PYTHON_INSTALL_EXIT=$?
-
-          echo "$PYTHON_INSTALL_EXIT" \
-            >/tmp/python-install-exit-code
-
-          sleep 10
-
-          WINE_PYTHON="$(
-            find "$WINEPREFIX/drive_c" \
-              -type f \
-              -iname python.exe \
-              -path '*Python312*' \
-              -print \
-              -quit \
-              2>/dev/null
-          )"
-
-          if [ -z "$WINE_PYTHON" ]; then
-            WINE_PYTHON="$(
-              find "$WINEPREFIX/drive_c" \
-                -type f \
-                -iname python.exe \
-                -print \
-                -quit \
-                2>/dev/null
-            )"
-          fi
-
-          if [ -z "$WINE_PYTHON" ]; then
-            echo "::error::Windows Python was not found"
-
-            find "$WINEPREFIX/drive_c" \
-              -type f \
-              -iname 'python*.exe' \
-              2>/dev/null \
-              >/tmp/python-executables.txt || true
-
-            exit 0
-          fi
-
-          printf '%s\n' \
-            "$WINE_PYTHON" \
-            >/tmp/wine-python-path
-
-          echo "Windows Python: $WINE_PYTHON"
-
-          wine "$WINE_PYTHON" --version \
-            > >(tee /tmp/python-version.log) \
-            2> >(tee /tmp/python-version-error.log >&2)
-
-          if [ "${PIPESTATUS[0]}" -eq 0 ]; then
-            touch /tmp/wine-python-ok
-          fi
-
-          exit 0
-
-      # ============================================================
-      # MetaTrader5 Python package
-      # ============================================================
-
-      - name: Install MetaTrader5 Python package
-        if: always()
-        continue-on-error: true
-        run: |
-          set +e
-
-          if [ ! -s /tmp/wine-python-path ]; then
-            echo "::error::Windows Python path is unavailable"
-            exit 0
-          fi
-
-          WINE_PYTHON="$(cat /tmp/wine-python-path)"
-
-          wine "$WINE_PYTHON" \
-            -m ensurepip --upgrade \
-            > >(tee /tmp/python-ensurepip.log) \
-            2> >(tee /tmp/python-ensurepip-error.log >&2)
-
-          wine "$WINE_PYTHON" \
-            -m pip install --upgrade pip \
-            > >(tee /tmp/pip-upgrade.log) \
-            2> >(tee /tmp/pip-upgrade-error.log >&2)
-
-          wine "$WINE_PYTHON" \
-            -m pip install MetaTrader5 \
-            > >(tee /tmp/metatrader5-pip-install.log) \
-            2> >(tee /tmp/metatrader5-pip-install-error.log >&2)
-
-          PIP_EXIT=$?
-
-          echo "$PIP_EXIT" \
-            >/tmp/metatrader5-pip-install-exit-code
-
-          wine "$WINE_PYTHON" \
-            -c "import MetaTrader5 as mt5; print('MetaTrader5 package version:', mt5.__version__)" \
-            > >(tee /tmp/metatrader5-import.log) \
-            2> >(tee /tmp/metatrader5-import-error.log >&2)
-
-          IMPORT_EXIT=$?
-
-          echo "$IMPORT_EXIT" \
-            >/tmp/metatrader5-import-exit-code
-
-          if [ "$PIP_EXIT" -eq 0 ] && [ "$IMPORT_EXIT" -eq 0 ]; then
-            touch /tmp/mt5-python-package-ok
-          fi
-
-          exit 0
-
-      # ============================================================
-      # Initial GUI run
-      #
-      # This run allows MT5 first-run setup and LiveUpdate to complete.
-      # The process is killed at the end. Python initialize() will then
-      # launch a clean instance for the actual IPC test.
-      # ============================================================
-
-      - name: Start MT5 and complete first-run setup
-        if: always()
-        continue-on-error: true
-        run: |
-          set +e
-
-          if [ ! -s /tmp/mt5-terminal-path ]; then
-            echo "::warning::MT5 terminal path is unavailable"
-            echo "not-started" >/tmp/mt5-launch-status
-            exit 0
-          fi
-
-          TERMINAL="$(cat /tmp/mt5-terminal-path)"
-
-          echo "Starting MT5:"
-          echo "$TERMINAL"
-
-          RUNNER_TRACKING_ID="" \
-          nohup wine "$TERMINAL" \
-            >/tmp/mt5-terminal.log 2>&1 &
-
-          INITIAL_PID=$!
-
-          echo "$INITIAL_PID" >/tmp/mt5-initial.pid
-          echo "Initial Wine PID: $INITIAL_PID"
-
-          # Wait for MT5 and LiveUpdate.
-          sleep 75
-
-          echo "=== Visible X11 windows before dialog handling ==="
-
-          xdotool search \
-            --onlyvisible \
-            --name '.*' \
-            getwindowname %@ \
-            >/tmp/x11-window-names-before.txt \
-            2>/tmp/xdotool-window-errors-before.log || true
-
-          cat /tmp/x11-window-names-before.txt || true
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/99980-before-dialog-handling.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          # Try to close the LiveUpdate prompt by clicking Later.
-          #
-          # Fixed Xvfb resolution: 1280x1024.
-          # Based on the observed dialog layout:
-          # Later button center is approximately x=700, y=574.
-          echo "Attempting to dismiss LiveUpdate with Later..."
-
-          xdotool mousemove --sync 700 574 \
-            2>/tmp/xdotool-later-mousemove-error.log || true
-
-          sleep 1
-
-          xdotool click 1 \
-            2>/tmp/xdotool-later-click-error.log || true
-
-          sleep 8
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/99981-after-liveupdate-later.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          # Close the company/account wizard using Cancel coordinates.
-          #
-          # Cancel button is approximately x=940, y=765.
-          echo "Attempting to close the company/account wizard..."
-
-          xdotool mousemove --sync 940 765 \
-            2>/tmp/xdotool-wizard-cancel-mousemove-error.log || true
-
-          sleep 1
-
-          xdotool click 1 \
-            2>/tmp/xdotool-wizard-cancel-click-error.log || true
-
-          sleep 10
-
-          # Fallback: Escape on focused MT5 window.
-          xdotool key Escape \
-            2>/tmp/xdotool-wizard-escape-error.log || true
-
-          sleep 8
-
-          echo "=== Visible X11 windows after dialog handling ==="
-
-          xdotool search \
-            --onlyvisible \
-            --name '.*' \
-            getwindowname %@ \
-            >/tmp/x11-window-names-after.txt \
-            2>/tmp/xdotool-window-errors-after.log || true
-
-          cat /tmp/x11-window-names-after.txt || true
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/99982-mt5-gui-validated.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          pgrep -af \
-            'terminal64.exe|terminal.exe|MetaTrader|metatrader|wine|wineserver' \
-            >/tmp/mt5-processes-before-ipc-kill.log || true
-
-          cat /tmp/mt5-processes-before-ipc-kill.log || true
-
-          MT5_PID="$(
-            pgrep -f 'terminal64.exe' |
-            head -1
-          )"
-
-          if [ -n "$MT5_PID" ]; then
-            echo "MT5 GUI validation succeeded with PID $MT5_PID"
-
-            echo "$MT5_PID" >/tmp/mt5-running.pid
-            echo "gui-validated" >/tmp/mt5-launch-status
-            touch /tmp/mt5-opened-ok
-          else
-            echo "::warning::terminal64.exe process was not found"
-            echo "not-running" >/tmp/mt5-launch-status
-          fi
-
-          # ----------------------------------------------------------
-          # Stop every existing MT5 instance before Python IPC.
-          # mt5.initialize(path=...) will launch a clean MT5 instance.
-          # ----------------------------------------------------------
-
-          echo "Stopping all terminal64.exe processes before IPC..."
-
-          pkill -TERM -f 'terminal64.exe' 2>/dev/null || true
-
-          for ATTEMPT in $(seq 1 30); do
-            if ! pgrep -f 'terminal64.exe' >/dev/null 2>&1; then
-              echo "All terminal64.exe processes stopped"
+          # Verify noVNC is responding
+          for i in $(seq 1 24); do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:6080/vnc.html | grep -q "200"; then
+              echo "noVNC is ready!"
               break
             fi
-
-            echo "Waiting for terminal64.exe to stop: $ATTEMPT/30"
-            sleep 2
-          done
-
-          if pgrep -f 'terminal64.exe' >/dev/null 2>&1; then
-            echo "::warning::MT5 did not stop gracefully"
-            echo "Forcing terminal64.exe termination..."
-
-            pkill -KILL -f 'terminal64.exe' 2>/dev/null || true
-            sleep 5
-          fi
-
-          if pgrep -f 'terminal64.exe' >/dev/null 2>&1; then
-            echo "::error::Unable to stop all terminal64.exe processes"
-            pgrep -af 'terminal64.exe' || true
-
-            echo "kill-failed" >/tmp/mt5-pre-ipc-stop-status
-          else
-            echo "MT5 cleanup complete"
-
-            echo "stopped" >/tmp/mt5-pre-ipc-stop-status
-            touch /tmp/mt5-pre-ipc-stopped-ok
-          fi
-
-          pgrep -af \
-            'terminal64.exe|terminal.exe|MetaTrader|metatrader|wine|wineserver' \
-            >/tmp/wine-processes-after-mt5-kill.log || true
-
-          cat /tmp/wine-processes-after-mt5-kill.log || true
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/99983-after-mt5-kill.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          exit 0
-
-      # ============================================================
-      # Python IPC
-      #
-      # No terminal64.exe should be running here.
-      # mt5.initialize(path) should launch it automatically.
-      # ============================================================
-
-      - name: Test MT5 Python IPC without login
-        if: always()
-        continue-on-error: true
-        run: |
-          set +e
-
-          if [ ! -s /tmp/wine-python-path ]; then
-            echo "::error::Windows Python path is unavailable"
-            exit 0
-          fi
-
-          if [ ! -s /tmp/mt5-terminal-windows-path ]; then
-            echo "::error::MT5 Windows terminal path is unavailable"
-            exit 0
-          fi
-
-          WINE_PYTHON="$(cat /tmp/wine-python-path)"
-
-          MT5_TERMINAL_WINDOWS="$(
-            cat /tmp/mt5-terminal-windows-path
-          )"
-
-          echo "Windows Python:"
-          echo "$WINE_PYTHON"
-
-          echo "MT5 Windows path:"
-          echo "$MT5_TERMINAL_WINDOWS"
-
-          echo "=== terminal64.exe before initialize() ==="
-
-          if pgrep -f 'terminal64.exe' >/dev/null 2>&1; then
-            echo "::warning::Existing terminal64.exe found before IPC"
-
-            pgrep -af 'terminal64.exe' || true
-
-            pkill -TERM -f 'terminal64.exe' 2>/dev/null || true
+            echo "Waiting for noVNC... attempt $i/24"
             sleep 10
-
-            pkill -KILL -f 'terminal64.exe' 2>/dev/null || true
-            sleep 5
-          else
-            echo "No terminal64.exe is running"
-          fi
-
-          cat >/tmp/test_mt5_ipc.py <<'PYTHON'
-          import os
-          import sys
-          import time
-
-          import MetaTrader5 as mt5
-
-
-          terminal_path = os.environ["MT5_TERMINAL_WINDOWS"]
-
-          print(
-              "MetaTrader5 package version:",
-              mt5.__version__,
-              flush=True,
-          )
-
-          print(
-              "Terminal path:",
-              terminal_path,
-              flush=True,
-          )
-
-          initialized = False
-
-          for attempt in range(1, 4):
-              print(
-                  f"IPC attempt {attempt}/3",
-                  flush=True,
-              )
-
-              initialized = mt5.initialize(
-                  terminal_path,
-                  timeout=120_000,
-                  portable=False,
-              )
-
-              print(
-                  "initialize:",
-                  initialized,
-                  flush=True,
-              )
-
-              print(
-                  "last_error:",
-                  mt5.last_error(),
-                  flush=True,
-              )
-
-              if initialized:
-                  break
-
-              mt5.shutdown()
-
-              if attempt < 3:
-                  print(
-                      "Waiting before retry...",
-                      flush=True,
-                  )
-                  time.sleep(15)
-
-          if not initialized:
-              print(
-                  "ERROR: mt5.initialize() failed",
-                  flush=True,
-              )
-              sys.exit(1)
-
-          try:
-              print(
-                  "Waiting for terminal IPC to stabilize...",
-                  flush=True,
-              )
-
-              time.sleep(5)
-
-              version = mt5.version()
-              terminal = mt5.terminal_info()
-              account = mt5.account_info()
-
-              print(
-                  "version:",
-                  version,
-                  flush=True,
-              )
-
-              print(
-                  "terminal_info:",
-                  terminal,
-                  flush=True,
-              )
-
-              print(
-                  "account_info:",
-                  account,
-                  flush=True,
-              )
-
-              if version is None:
-                  print(
-                      "ERROR: mt5.version() returned None:",
-                      mt5.last_error(),
-                      flush=True,
-                  )
-                  sys.exit(1)
-
-              if terminal is None:
-                  print(
-                      "ERROR: mt5.terminal_info() returned None:",
-                      mt5.last_error(),
-                      flush=True,
-                  )
-                  sys.exit(1)
-
-              print(
-                  "terminal.name:",
-                  terminal.name,
-                  flush=True,
-              )
-
-              print(
-                  "terminal.build:",
-                  terminal.build,
-                  flush=True,
-              )
-
-              print(
-                  "terminal.path:",
-                  terminal.path,
-                  flush=True,
-              )
-
-              print(
-                  "terminal.data_path:",
-                  terminal.data_path,
-                  flush=True,
-              )
-
-              print(
-                  "terminal.connected:",
-                  terminal.connected,
-                  flush=True,
-              )
-
-              print(
-                  "terminal.trade_allowed:",
-                  terminal.trade_allowed,
-                  flush=True,
-              )
-
-              if account is None:
-                  print(
-                      "No trading account is logged in, as expected.",
-                      flush=True,
-                  )
-              else:
-                  print(
-                      "An account is already present:",
-                      account.login,
-                      flush=True,
-                  )
-
-              print(
-                  "MT5 Python IPC test passed.",
-                  flush=True,
-              )
-
-          finally:
-              mt5.shutdown()
-          PYTHON
-
-          TEST_SCRIPT_WINDOWS="$(
-            winepath -w /tmp/test_mt5_ipc.py
-          )"
-
-          echo "Test script Windows path:"
-          echo "$TEST_SCRIPT_WINDOWS"
-
-          MT5_TERMINAL_WINDOWS="$MT5_TERMINAL_WINDOWS" \
-          PYTHONUNBUFFERED=1 \
-          timeout \
-            --signal=TERM \
-            --kill-after=30s \
-            420s \
-            wine "$WINE_PYTHON" "$TEST_SCRIPT_WINDOWS" \
-            > >(tee /tmp/mt5-ipc-test.log) \
-            2> >(tee /tmp/mt5-ipc-test-error.log >&2) &
-
-          IPC_WRAPPER_PID=$!
-
-          echo "$IPC_WRAPPER_PID" \
-            >/tmp/mt5-ipc-wrapper.pid
-
-          echo "IPC wrapper PID: $IPC_WRAPPER_PID"
-
-          MT5_AUTO_STARTED=0
-
-          for ATTEMPT in $(seq 1 90); do
-            MT5_PID="$(
-              pgrep -f 'terminal64.exe' |
-              head -1
-            )"
-
-            if [ -n "$MT5_PID" ]; then
-              echo "initialize() launched MT5 with PID $MT5_PID"
-
-              echo "$MT5_PID" \
-                >/tmp/mt5-ipc-autostarted.pid
-
-              touch /tmp/mt5-ipc-autostarted-ok
-
-              MT5_AUTO_STARTED=1
-              break
-            fi
-
-            if ! kill -0 "$IPC_WRAPPER_PID" 2>/dev/null; then
-              echo "IPC process exited before terminal64.exe was observed"
-              break
-            fi
-
-            echo "Waiting for initialize() to launch MT5: $ATTEMPT/90"
-            sleep 2
           done
 
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/99990-mt5-initialize-autostart.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          wait "$IPC_WRAPPER_PID"
-
-          IPC_EXIT=$?
-
-          echo "$IPC_EXIT" \
-            >/tmp/mt5-ipc-test-exit-code
-
-          echo "MT5 IPC exit code: $IPC_EXIT"
-
-          pgrep -af 'terminal64.exe' \
-            >/tmp/mt5-processes-after-ipc.log || true
-
-          cat /tmp/mt5-processes-after-ipc.log || true
-
-          if [ "$IPC_EXIT" -eq 0 ]; then
-            touch /tmp/mt5-ipc-ok
-          fi
-
-          if [ "$MT5_AUTO_STARTED" -ne 1 ]; then
-            echo "::warning::initialize() did not visibly start terminal64.exe"
-          fi
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/99991-mt5-after-ipc.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          sleep 10
-
-          import \
-            -display "$DISPLAY" \
-            -window root \
-            /tmp/screenshots/99992-mt5-final.png \
-            2>>/tmp/screenshot-errors.log || true
-
-          exit 0
-
       # ============================================================
-      # Diagnostics
+      # Cloudflare tunnel + OTS
       # ============================================================
 
-      - name: Collect diagnostics
+      - name: Download cloudflared
+        run: |
+          wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" \
+            -O /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          echo "cloudflared downloaded"
+
+      - name: Start Cloudflare tunnel
+        run: |
+          /tmp/cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
+          echo $! > /tmp/cloudflared.pid
+
+          # Wait for tunnel URL
+          TUNNEL_URL=""
+          for i in $(seq 1 20); do
+            sleep 3
+            TUNNEL_URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1)
+            if [ -n "$TUNNEL_URL" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "::error::Cloudflare tunnel URL not detected"
+            cat /tmp/cloudflared.log
+            exit 1
+          fi
+
+          NOVNC_URL="${TUNNEL_URL}/vnc.html"
+          echo "NOVNC_URL=$NOVNC_URL" >> $GITHUB_ENV
+
+      - name: Publish noVNC URL via OneTimeSecret
+        env:
+          OTS_USERNAME: ${{ secrets.OTS_USERNAME }}
+          OTS_API_KEY: ${{ secrets.OTS_API_KEY }}
+          OTS_PASSPHRASE: ${{ secrets.OTS_PASSPHRASE }}
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            -u "${OTS_USERNAME}:${OTS_API_KEY}" \
+            -d "secret=$NOVNC_URL" \
+            -d "passphrase=$OTS_PASSPHRASE" \
+            -d "ttl=1800" \
+            https://eu.onetimesecret.com/api/v1/share)
+
+          SECRET_KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('secret_key',''))" 2>/dev/null || echo "")
+
+          if [ -z "$SECRET_KEY" ]; then
+            echo "::error::Failed to create OTS secret. secret_key is empty."
+            echo "::error::Check OTS_USERNAME and OTS_API_KEY secrets."
+            exit 1
+          fi
+
+          # Detect OTS domain from API response (eu vs global)
+          OTS_DOMAIN=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          url = data.get('metadata_url', '')
+          if 'eu.onetimesecret.com' in url:
+              print('eu.onetimesecret.com')
+          else:
+              print('onetimesecret.com')
+          " 2>/dev/null || echo "onetimesecret.com")
+
+          OTS_LINK="https://${OTS_DOMAIN}/secret/$SECRET_KEY"
+
+          echo ""
+          echo "========================================================"
+          echo " noVNC ACCESS (via OneTimeSecret)"
+          echo "========================================================"
+          echo ""
+          echo " OTS Link: $OTS_LINK"
+          echo " Passphrase: (your OTS_PASSPHRASE secret)"
+          echo ""
+          echo " Open the OTS link, enter passphrase, get noVNC URL."
+          echo " Then open the noVNC URL in your browser."
+          echo ""
+          echo " Credentials are auto-decrypted from SOPS."
+          echo "========================================================"
+
+      # ============================================================
+      # Test MT5 connections
+      # ============================================================
+
+      - name: Test MT5 connections
+        run: |
+          echo "Running MT5 connection tests..."
+
+          # Wait for MT5 installation to complete (entrypoint.sh runs async)
+          echo "Waiting for MT5 installation to complete..."
+          for i in $(seq 1 60); do
+            if docker exec mt5-test test -f /opt/mt5/python-unix-path 2>/dev/null; then
+              echo "Python installed, checking for MT5 terminals..."
+              break
+            fi
+            echo "Waiting for installation... attempt $i/60"
+            sleep 10
+          done
+
+          # Check if test script exists
+          if ! docker exec mt5-test test -f /opt/forex/src/test_mt5.py 2>/dev/null; then
+            echo "::warning::test_mt5.py not found, skipping MT5 connection test"
+            exit 0
+          fi
+
+          # Get Windows Python path
+          WIN_PYTHON=$(docker exec mt5-test cat /opt/mt5/python-unix-path 2>/dev/null || echo "")
+
+          if [ -z "$WIN_PYTHON" ]; then
+            echo "::warning::Windows Python not installed, skipping MT5 connection test"
+            exit 0
+          fi
+
+          echo "Windows Python: $WIN_PYTHON"
+
+          # Run test with Windows Python (Wine)
+          # Z: drive maps to Linux root, so /opt/forex/src -> Z:\opt\forex\src
+          docker exec mt5-test bash -c "$WIN_PYTHON 'Z:\\opt\\forex\\src\\test_mt5.py'" || true
+
+          # Copy test results
+          docker cp mt5-test:/tmp/test_mt5_results.json ./test_results.json 2>/dev/null || true
+
+          if [ -f ./test_results.json ]; then
+            echo ""
+            echo "=== Test Results ==="
+            cat ./test_results.json
+          else
+            echo "::warning::test_results.json not found"
+          fi
+
+      # ============================================================
+      # Keep alive
+      # ============================================================
+
+      - name: Keep alive
+        run: |
+          MINUTES=${{ inputs.keep_alive_minutes }}
+          echo "Keeping runner alive for $MINUTES minutes..."
+          echo "Container logs (last 50 lines):"
+          docker logs mt5-test --tail 50 2>&1 || true
+          echo ""
+          echo "You can now connect via noVNC."
+          sleep $((MINUTES * 60))
+          echo "Keep alive timeout reached."
+
+      # ============================================================
+      # Upload installers to release (if downloaded from CDN)
+      # ============================================================
+
+      - name: Upload installers to release
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Copy files from container
+          docker cp mt5-test:/tmp/cdn-downloaded.txt ./cdn-downloaded.txt 2>/dev/null || true
+          docker cp mt5-test:/opt/installers ./installers 2>/dev/null || true
+
+          if [ ! -s ./cdn-downloaded.txt ]; then
+            echo "No new CDN downloads to upload"
+            exit 0
+          fi
+
+          echo "Files downloaded from CDN:"
+          cat ./cdn-downloaded.txt
+
+          # Check if release exists, create if not
+          if ! gh release view mt5-installers --repo ${{ github.repository }} &>/dev/null; then
+            echo "Creating mt5-installers release..."
+            gh release create mt5-installers \
+              --repo ${{ github.repository }} \
+              --title "MT5 Installers" \
+              --notes "Fallback installers for MT5 brokers. Auto-updated by forex workflow."
+          fi
+
+          # Generate checksums
+          echo "Generating checksums..."
+          cd ./installers
+          sha256sum *.exe > checksums.txt 2>/dev/null || true
+          cd ..
+
+          # Upload each file
+          while IFS= read -r filename; do
+            if [ -f "./installers/$filename" ]; then
+              echo "Uploading $filename..."
+              gh release upload mt5-installers \
+                "./installers/$filename" \
+                --clobber \
+                --repo ${{ github.repository }} || true
+            fi
+          done < ./cdn-downloaded.txt
+
+          # Upload checksums
+          if [ -f ./installers/checksums.txt ]; then
+            echo "Uploading checksums.txt..."
+            gh release upload mt5-installers \
+              ./installers/checksums.txt \
+              --clobber \
+              --repo ${{ github.repository }} || true
+          fi
+
+          echo "Upload complete."
+
+      # ============================================================
+      # Cleanup
+      # ============================================================
+
+      - name: Container logs
         if: always()
         run: |
-          set +e
+          docker logs mt5-test > /tmp/container-stdout.log 2> /tmp/container-stderr.log || true
+          echo "=== Container stdout (last 100) ==="
+          tail -100 /tmp/container-stdout.log
+          echo ""
+          echo "=== Container stderr (last 100) ==="
+          tail -100 /tmp/container-stderr.log
 
-          echo "============================================================"
-          echo "Status"
-          echo "============================================================"
+      - name: Capture screenshots
+        if: always()
+        run: |
+          mkdir -p /tmp/final-screenshots
 
-          echo -n "Xvfb: "
-          if [ -f /tmp/xvfb-ok ]; then
-            echo "OK"
-          else
-            echo "FAILED"
+          docker exec mt5-test bash -c \
+            'for i in 1 2 3; do
+              import -window root /tmp/screenshot-$i.png 2>/dev/null || true
+              sleep 2
+            done' || true
+
+          docker cp mt5-test:/tmp/screenshot-1.png /tmp/final-screenshots/ 2>/dev/null || true
+          docker cp mt5-test:/tmp/screenshot-2.png /tmp/final-screenshots/ 2>/dev/null || true
+          docker cp mt5-test:/tmp/screenshot-3.png /tmp/final-screenshots/ 2>/dev/null || true
+
+          COUNT=$(ls /tmp/final-screenshots/*.png 2>/dev/null | wc -l)
+          echo "Screenshots captured: $COUNT"
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop mt5-test 2>/dev/null || true
+          docker rm mt5-test 2>/dev/null || true
+
+          # Stop cloudflared
+          if [ -f /tmp/cloudflared.pid ]; then
+            kill $(cat /tmp/cloudflared.pid) 2>/dev/null || true
           fi
-
-          echo -n "Wine installed: "
-          if [ -f /tmp/wine-installed-ok ]; then
-            echo "OK"
-          else
-            echo "FAILED"
-          fi
-
-          echo -n "Wine prefix: "
-          if [ -f /tmp/wine-prefix-ok ]; then
-            echo "OK"
-          else
-            echo "FAILED"
-          fi
-
-          echo -n "MT5 terminal: "
-          cat /tmp/mt5-terminal-status 2>/dev/null || echo "unknown"
-
-          echo -n "MT5 GUI: "
-          cat /tmp/mt5-launch-status 2>/dev/null || echo "unknown"
-
-          echo -n "Pre-IPC terminal stop: "
-          cat /tmp/mt5-pre-ipc-stop-status 2>/dev/null || echo "unknown"
-
-          echo -n "Windows Python: "
-          if [ -f /tmp/wine-python-ok ]; then
-            echo "OK"
-          else
-            echo "FAILED"
-          fi
-
-          echo -n "MetaTrader5 package: "
-          if [ -f /tmp/mt5-python-package-ok ]; then
-            echo "OK"
-          else
-            echo "FAILED"
-          fi
-
-          echo -n "MT5 initialize auto-start: "
-          if [ -f /tmp/mt5-ipc-autostarted-ok ]; then
-            echo "OK"
-          else
-            echo "FAILED"
-          fi
-
-          echo -n "Python IPC: "
-          if [ -f /tmp/mt5-ipc-ok ]; then
-            echo "OK"
-          else
-            echo "FAILED"
-          fi
-
-          echo "============================================================"
-          echo "Exit codes"
-          echo "============================================================"
-
-          for FILE in \
-            /tmp/wineboot-exit-code \
-            /tmp/webview2-exit-code \
-            /tmp/mt5-install-exit-code \
-            /tmp/python-install-exit-code \
-            /tmp/metatrader5-pip-install-exit-code \
-            /tmp/metatrader5-import-exit-code \
-            /tmp/mt5-ipc-test-exit-code
-          do
-            echo "$(basename "$FILE"): $(cat "$FILE" 2>/dev/null || echo unknown)"
-          done
-
-          echo "============================================================"
-          echo "Processes"
-          echo "============================================================"
-
-          pgrep -af \
-            'Xvfb|terminal64.exe|terminal.exe|MetaTrader|metatrader|wine|wineserver|webview|msedge|python.exe' ||
-            true
-
-          echo "============================================================"
-          echo "Screenshot count"
-          echo "============================================================"
-
-          SCREENSHOT_COUNT="$(
-            find /tmp/screenshots \
-              -maxdepth 1 \
-              -type f \
-              -name '*.png' \
-              2>/dev/null |
-              wc -l
-          )"
-
-          echo "$SCREENSHOT_COUNT" |
-            tee /tmp/screenshot-count
-
-          echo "============================================================"
-          echo "Latest screenshots"
-          echo "============================================================"
-
-          find /tmp/screenshots \
-            -maxdepth 1 \
-            -type f \
-            -name '*.png' \
-            -printf '%TY-%Tm-%Td %TH:%TM:%TS %f\n' \
-            2>/dev/null |
-            sort |
-            tail -40 || true
-
-          echo "============================================================"
-          echo "MT5 IPC stdout"
-          echo "============================================================"
-
-          cat /tmp/mt5-ipc-test.log 2>/dev/null || true
-
-          echo "============================================================"
-          echo "MT5 IPC stderr"
-          echo "============================================================"
-
-          cat /tmp/mt5-ipc-test-error.log 2>/dev/null || true
-
-          echo "============================================================"
-          echo "MT5 terminal log"
-          echo "============================================================"
-
-          tail -400 /tmp/mt5-terminal.log 2>/dev/null || true
-
-          echo "============================================================"
-          echo "Screenshot errors"
-          echo "============================================================"
-
-          tail -200 /tmp/screenshot-errors.log 2>/dev/null || true
-
-          if [ -f /tmp/screenshot.pid ]; then
-            kill "$(cat /tmp/screenshot.pid)" 2>/dev/null || true
-          fi
-
-          sleep 3
 
       # ============================================================
-      # Upload artifacts regardless of result
+      # Upload artifacts
       # ============================================================
 
-      - name: Upload screenshots and logs
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mt5-wine-ipc-diagnostics
+          name: forex-test-logs
           path: |
-            /tmp/screenshots/
-
-            /tmp/mt5linux.sh
-            /tmp/mt5linux-sha256.txt
-            /tmp/webview-url.txt
-            /tmp/mt5-url.txt
-
-            /tmp/wine-version.txt
-            /tmp/xvfb.log
-            /tmp/xdpyinfo.log
-            /tmp/screenshot-stdout.log
-            /tmp/screenshot-errors.log
-            /tmp/screenshot-count
-
-            /tmp/wineboot.log
-            /tmp/wineboot-error.log
-            /tmp/wineboot-exit-code
-            /tmp/winecfg.log
-            /tmp/winecfg-error.log
-            /tmp/wine-cmd.log
-            /tmp/wine-cmd-error.log
-
-            /tmp/webview2-install.log
-            /tmp/webview2-install-error.log
-            /tmp/webview2-exit-code
-
-            /tmp/mt5-install.log
-            /tmp/mt5-install-error.log
-            /tmp/mt5-install-exit-code
-
-            /tmp/mt5-terminal-path
-            /tmp/mt5-terminal-windows-path
-            /tmp/mt5-terminal-status
-            /tmp/mt5-terminal.log
-            /tmp/mt5-running.pid
-            /tmp/mt5-launch-status
-            /tmp/mt5-initial.pid
-
-            /tmp/x11-window-names-before.txt
-            /tmp/x11-window-names-after.txt
-            /tmp/xdotool-window-errors-before.log
-            /tmp/xdotool-window-errors-after.log
-
-            /tmp/xdotool-later-mousemove-error.log
-            /tmp/xdotool-later-click-error.log
-            /tmp/xdotool-wizard-cancel-mousemove-error.log
-            /tmp/xdotool-wizard-cancel-click-error.log
-            /tmp/xdotool-wizard-escape-error.log
-
-            /tmp/mt5-processes-before-ipc-kill.log
-            /tmp/wine-processes-after-mt5-kill.log
-            /tmp/mt5-pre-ipc-stop-status
-
-            /tmp/python-install.log
-            /tmp/python-install-error.log
-            /tmp/python-install-exit-code
-            /tmp/python-version.log
-            /tmp/python-version-error.log
-            /tmp/wine-python-path
-            /tmp/python-executables.txt
-
-            /tmp/python-ensurepip.log
-            /tmp/python-ensurepip-error.log
-            /tmp/pip-upgrade.log
-            /tmp/pip-upgrade-error.log
-
-            /tmp/metatrader5-pip-install.log
-            /tmp/metatrader5-pip-install-error.log
-            /tmp/metatrader5-pip-install-exit-code
-            /tmp/metatrader5-import.log
-            /tmp/metatrader5-import-error.log
-            /tmp/metatrader5-import-exit-code
-
-            /tmp/test_mt5_ipc.py
-            /tmp/mt5-ipc-wrapper.pid
-            /tmp/mt5-ipc-autostarted.pid
-            /tmp/mt5-processes-after-ipc.log
-            /tmp/mt5-ipc-test.log
-            /tmp/mt5-ipc-test-error.log
-            /tmp/mt5-ipc-test-exit-code
-
-            /tmp/wine-prefix-executables.txt
+            /tmp/final-screenshots
+            /tmp/container-stdout.log
+            /tmp/container-stderr.log
+            /tmp/cloudflared.log
+            ./test_results.json
           if-no-files-found: warn
           retention-days: 3
-
-      # ============================================================
-      # Final result after artifact upload
-      # ============================================================
-
-      - name: Final test result
-        if: always()
-        run: |
-          set -uo pipefail
-
-          FAILED=0
-
-          if [ ! -f /tmp/xvfb-ok ]; then
-            echo "::error::Xvfb verification failed"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/wine-installed-ok ]; then
-            echo "::error::WineHQ staging installation failed"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/wine-prefix-ok ]; then
-            echo "::error::Wine prefix initialization failed"
-            FAILED=1
-          fi
-
-          if [ ! -s /tmp/mt5-terminal-path ]; then
-            echo "::error::terminal64.exe was not found"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/mt5-opened-ok ]; then
-            echo "::error::MT5 GUI validation failed"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/mt5-pre-ipc-stopped-ok ]; then
-            echo "::error::Existing MT5 instances were not stopped before IPC"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/wine-python-ok ]; then
-            echo "::error::Windows Python installation failed"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/mt5-python-package-ok ]; then
-            echo "::error::MetaTrader5 Python package installation failed"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/mt5-ipc-autostarted-ok ]; then
-            echo "::error::mt5.initialize() did not start terminal64.exe"
-            FAILED=1
-          fi
-
-          if [ ! -f /tmp/mt5-ipc-ok ]; then
-            echo "::error::MT5 Python IPC test failed"
-            FAILED=1
-          fi
-
-          if [ "$FAILED" -ne 0 ]; then
-            echo
-            echo "MT5 Wine IPC test failed."
-            echo "Screenshots and logs were uploaded as:"
-            echo "mt5-wine-ipc-diagnostics"
-            exit 1
-          fi
-
-          echo
-          echo "Xvfb: OK"
-          echo "Wine prefix: OK"
-          echo "MT5 installation: OK"
-          echo "MT5 GUI first-run validation: OK"
-          echo "Existing MT5 processes stopped: OK"
-          echo "Windows Python: OK"
-          echo "MetaTrader5 package: OK"
-          echo "mt5.initialize() auto-start: OK"
-          echo "Python to MT5 IPC: OK"
-          echo "No account login was required."
