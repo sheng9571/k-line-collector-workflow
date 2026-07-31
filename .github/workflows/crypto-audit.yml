@@ -13,6 +13,8 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout workflow repo
@@ -44,20 +46,19 @@ jobs:
 
       - name: Copy reports into repo
         run: |
+          # Clean up old structure (per-symbol dirs)
           rm -rf reports/crypto
-          if [ -d /tmp/audit-output/reports/crypto ]; then
-            mkdir -p reports
-            cp -r /tmp/audit-output/reports/crypto reports/
-          fi
-          if [ -f /tmp/audit-output/REPORTS.md ]; then
-            cp /tmp/audit-output/REPORTS.md REPORTS.md
+          
+          # Copy new structure
+          if [ -d /tmp/audit-output/reports ]; then
+            cp -r /tmp/audit-output/reports .
           fi
 
       - name: Commit and push reports
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add reports/ REPORTS.md
+          git add reports/
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
