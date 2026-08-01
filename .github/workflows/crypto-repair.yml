@@ -41,8 +41,8 @@ jobs:
           mkdir -p /tmp/repair-output
           chmod -R 777 /tmp/repair-output
 
-          # Build CLI args
-          CLI_ARGS="--mode repair"
+          # Build CLI args (symbols and timeframes are optional)
+          CLI_ARGS=""
           
           if [ -n "${{ inputs.symbols }}" ]; then
             CLI_ARGS="$CLI_ARGS --symbols ${{ inputs.symbols }}"
@@ -52,7 +52,7 @@ jobs:
             CLI_ARGS="$CLI_ARGS --timeframes ${{ inputs.timeframes }}"
           fi
 
-          echo "Running: crypto $CLI_ARGS"
+          echo "Running: crypto repair $CLI_ARGS"
 
           docker run --rm \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
@@ -60,7 +60,7 @@ jobs:
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
             -v ${{ github.workspace }}/k-line-collector/crypto:/app/crypto:ro \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
-            crypto $CLI_ARGS
+            crypto repair $CLI_ARGS
 
       - name: Show repair report
         if: always()
