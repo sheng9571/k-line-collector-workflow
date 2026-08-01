@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-08-01T14:08:26.175336+00:00",
+  "generated_at_utc": "2026-08-01T14:28:26.907526+00:00",
   "mt5_version": [
     500,
     6090,
@@ -19722,7 +19722,7 @@
       "custom": false,
       "chart_mode": 0,
       "select": true,
-      "visible": false,
+      "visible": true,
       "session_deals": 0,
       "session_buy_orders": 0,
       "session_sell_orders": 0,
