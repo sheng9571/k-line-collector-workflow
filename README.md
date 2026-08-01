@@ -58,6 +58,40 @@ Reports track:
 
 See [reports/REPORTS.md](reports/REPORTS.md) for the latest audit results.
 
+### Crypto Repair (`crypto-repair.yml`)
+
+Manual trigger only. Fills gaps in historical data using Binance REST API.
+
+- Trigger: `workflow_dispatch` only
+- Duration: ~5-15 minutes (depends on gap count)
+- Mode: `repair` (reads gaps from HF, fills via REST API)
+
+#### Inputs
+
+| Input | Description | Default |
+|-------|-------------|---------|
+| `symbols` | Comma-separated symbols to repair (empty = all) | all |
+| `timeframes` | Comma-separated timeframes to repair (empty = all) | all |
+| `deadline_minutes` | Max runtime in minutes | 60 |
+
+#### How it works
+
+1. Scans HuggingFace parquet files for gaps (missing candles)
+2. For each gap, attempts to fetch data from Binance REST API (`/api/v3/klines`)
+3. Writes repaired data to local parquet files
+4. Outputs `repair_report.json` with statistics
+
+#### Rate Limits
+
+Binance REST API limits: ~1200 requests/minute (6000 weight, 5 weight per 1000-limit request).
+Repair typically uses <500 requests total, well within limits.
+
+#### Recommended workflow
+
+1. Run `crypto-audit` to identify gaps
+2. Run `crypto-repair` to fill gaps via API
+3. Run `crypto-audit` again to verify gaps are filled
+
 ## Report Structure
 
 Audit reports follow a hierarchical structure designed to scale across multiple markets (crypto, forex, stock).
