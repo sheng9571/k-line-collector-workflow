@@ -1,0 +1,77 @@
+name: Crypto Repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: 'Symbols to repair (comma-separated, or leave empty for all)'
+        required: false
+        default: ''
+      timeframes:
+        description: 'Timeframes to repair (comma-separated, or leave empty for all)'
+        required: false
+        default: ''
+      deadline_minutes:
+        description: 'Deadline in minutes (default: 60)'
+        required: false
+        default: '60'
+
+concurrency:
+  group: crypto-repair
+  cancel-in-progress: true
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Clone collector repo
+        run: git clone --depth 1 https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git
+
+      - name: Run repair
+        run: |
+          mkdir -p /tmp/repair-output
+          chmod -R 777 /tmp/repair-output
+
+          # Build CLI args
+          CLI_ARGS="--mode repair --deadline-minutes ${{ inputs.deadline_minutes }}"
+          
+          if [ -n "${{ inputs.symbols }}" ]; then
+            CLI_ARGS="$CLI_ARGS --symbols ${{ inputs.symbols }}"
+          fi
+          
+          if [ -n "${{ inputs.timeframes }}" ]; then
+            CLI_ARGS="$CLI_ARGS --timeframes ${{ inputs.timeframes }}"
+          fi
+
+          echo "Running: crypto $CLI_ARGS"
+
+          docker run --rm \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -v /tmp/repair-output:/app/data \
+            -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
+            -v ${{ github.workspace }}/k-line-collector/crypto:/app/crypto:ro \
+            ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
+            crypto $CLI_ARGS
+
+      - name: Show repair report
+        if: always()
+        run: |
+          if [ -f /tmp/repair-output/repair_report.json ]; then
+            echo "=== Repair Report ==="
+            cat /tmp/repair-output/repair_report.json
+          else
+            echo "No repair report generated."
+          fi
