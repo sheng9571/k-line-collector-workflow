@@ -56,7 +56,9 @@ jobs:
 
           docker run --rm \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e AUDIT_JSON_PATH=/app/audit/audit.json \
             -v /tmp/repair-output:/app/data \
+            -v ${{ github.workspace }}/reports/crypto:/app/audit:ro \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
             -v ${{ github.workspace }}/k-line-collector/crypto:/app/crypto:ro \
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
@@ -71,3 +73,11 @@ jobs:
           else
             echo "No repair report generated."
           fi
+
+      - name: Upload repair report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repair-report
+          path: /tmp/repair-output/repair_report.json
+          if-no-files-found: ignore
