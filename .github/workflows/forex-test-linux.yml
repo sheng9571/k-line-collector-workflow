@@ -75,6 +75,8 @@ jobs:
           docker run -d \
             --name mt5-test \
             --shm-size=1g \
+            --dns 8.8.8.8 \
+            --dns 8.8.4.4 \
             -p 6080:6080 \
             -e DISPLAY=:99 \
             -e RUN_MODE=interactive \
