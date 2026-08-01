@@ -11,10 +11,6 @@ on:
         description: 'Timeframes to repair (comma-separated, or leave empty for all)'
         required: false
         default: ''
-      deadline_minutes:
-        description: 'Deadline in minutes (default: 60)'
-        required: false
-        default: '60'
 
 concurrency:
   group: crypto-repair
@@ -46,7 +42,7 @@ jobs:
           chmod -R 777 /tmp/repair-output
 
           # Build CLI args
-          CLI_ARGS="--mode repair --deadline-minutes ${{ inputs.deadline_minutes }}"
+          CLI_ARGS="--mode repair"
           
           if [ -n "${{ inputs.symbols }}" ]; then
             CLI_ARGS="$CLI_ARGS --symbols ${{ inputs.symbols }}"

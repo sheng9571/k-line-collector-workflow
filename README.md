@@ -72,7 +72,6 @@ Manual trigger only. Fills gaps in historical data using Binance REST API.
 |-------|-------------|---------|
 | `symbols` | Comma-separated symbols to repair (empty = all) | all |
 | `timeframes` | Comma-separated timeframes to repair (empty = all) | all |
-| `deadline_minutes` | Max runtime in minutes | 60 |
 
 #### How it works
 
@@ -157,19 +156,6 @@ When implementing forex or stock audit:
 3. Update `reports/REPORTS.md` to include the new market row (each audit regenerates this file)
 4. For large markets (stock), split into `{REGION}.json` files with a `_summary.json`
 
-## Secrets Required
-
-| Secret | Description |
-|--------|-------------|
-| `GHCR_PAT` | Personal Access Token with `read:packages` scope to pull the private Docker image |
-| `HF_TOKEN` | HuggingFace write token for uploading parquet files to `sheng9571/kline-crypto` |
-
-## Setup
-
-1. Create a PAT with `read:packages` scope on the k-line-collector repo owner account
-2. Create a HuggingFace write token at https://huggingface.co/settings/tokens
-3. Add both as repository secrets in this repo's Settings > Secrets > Actions
-
 ## Monthly Budget Estimate
 
 | Workflow | Frequency | Est. per run | Monthly total |
@@ -177,5 +163,6 @@ When implementing forex or stock audit:
 | crypto-daily | 30x/month | ~30 min | ~900 min |
 | crypto-backfill | ad-hoc | ~5h per batch | as needed |
 | crypto-audit | 4x/month | ~60 min | ~240 min |
+| crypto-repair | ad-hoc | ~10 min | as needed |
 
 Total steady-state: ~1140 min/month (well within 2000 min free tier).
