@@ -1,6 +1,26 @@
 name: Crypto Repair
 
 on:
+  workflow_call:
+    inputs:
+      symbols:
+        description: 'Symbols to repair (comma-separated, or leave empty for all)'
+        required: false
+        type: string
+        default: ''
+      timeframes:
+        description: 'Timeframes to repair (comma-separated, or leave empty for all)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      GHCR_PAT:
+        required: true
+      K_LINE_COLLECTOR_PAT:
+        required: true
+      HF_TOKEN:
+        required: true
+
   workflow_dispatch:
     inputs:
       symbols:

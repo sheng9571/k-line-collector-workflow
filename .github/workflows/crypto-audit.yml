@@ -65,3 +65,11 @@ jobs:
             git commit -m "audit: update crypto k-line gap reports [skip ci]"
             git push
           fi
+
+  repair:
+    needs: audit
+    uses: ./.github/workflows/crypto-repair.yml
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+      K_LINE_COLLECTOR_PAT: ${{ secrets.K_LINE_COLLECTOR_PAT }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
