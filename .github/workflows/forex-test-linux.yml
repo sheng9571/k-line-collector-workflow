@@ -253,6 +253,28 @@ jobs:
           echo "Symbols copied:"
           ls -la reports/forex/symbols/ 2>/dev/null || echo "No symbols found"
 
+      - name: Merge session data into symbols
+        run: |
+          # Check if merge script exists
+          if [ ! -f collector/forex/src/merge_sessions.py ]; then
+            echo "::warning::merge_sessions.py not found, skipping session merge"
+            exit 0
+          fi
+
+          # Check if any session files exist
+          SESSION_COUNT=$(ls reports/forex/symbols/*_symbol_sessions_utc.json 2>/dev/null | wc -l)
+          if [ "$SESSION_COUNT" -eq 0 ]; then
+            echo "No session files found, skipping merge"
+            exit 0
+          fi
+
+          echo "Found $SESSION_COUNT session file(s), merging..."
+          python3 collector/forex/src/merge_sessions.py reports/forex/symbols/
+
+          echo ""
+          echo "Merged symbols:"
+          ls -la reports/forex/symbols/*.json 2>/dev/null || true
+
       - name: Commit and push symbols
         run: |
           git config user.name "github-actions[bot]"
