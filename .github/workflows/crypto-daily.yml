@@ -33,7 +33,9 @@ jobs:
         continue-on-error: true  # First run or expired artifact
 
       - name: Create output directory
-        run: mkdir -p /tmp/output
+        run: |
+          mkdir -p /tmp/output
+          chmod 777 /tmp/output
 
       - name: Run daily collection
         run: |
