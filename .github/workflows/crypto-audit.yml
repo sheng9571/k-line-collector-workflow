@@ -68,6 +68,8 @@ jobs:
 
   repair:
     needs: audit
+    permissions:
+      contents: write
     uses: ./.github/workflows/crypto-repair.yml
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
