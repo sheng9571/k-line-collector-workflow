@@ -13,6 +13,8 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write  # Required for gh cache delete
 
     steps:
       - name: Login to ghcr.io
@@ -25,17 +27,16 @@ jobs:
       - name: Clone collector repo
         run: git clone --depth 1 https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git
 
-      - name: Download last_ts cache
-        uses: actions/download-artifact@v4
+      - name: Restore last_ts cache
+        uses: actions/cache/restore@v4
         with:
-          name: crypto-last-ts
           path: /tmp/cache
-        continue-on-error: true  # First run or expired artifact
+          key: crypto-last-ts
 
-      - name: Create output directory
+      - name: Create directories
         run: |
-          mkdir -p /tmp/output
-          chmod 777 /tmp/output
+          mkdir -p /tmp/cache /tmp/output
+          chmod 777 /tmp/cache /tmp/output
 
       - name: Run daily collection
         run: |
@@ -50,11 +51,22 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/k-line-collector:latest \
             crypto daily
 
-      - name: Upload last_ts cache
-        uses: actions/upload-artifact@v4
+      - name: Copy output to cache dir for next run
+        run: |
+          if [ -f /tmp/output/last_ts.json ]; then
+            cp /tmp/output/last_ts.json /tmp/cache/last_ts.json
+          fi
+        if: always()
+
+      - name: Delete old cache
+        run: gh cache delete crypto-last-ts || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: always()
+
+      - name: Save last_ts cache
+        uses: actions/cache/save@v4
         with:
-          name: crypto-last-ts
-          path: /tmp/output/last_ts.json
-          retention-days: 5
-          overwrite: true
-        if: always()  # Upload even if collection had errors
+          path: /tmp/cache
+          key: crypto-last-ts
+        if: always()
