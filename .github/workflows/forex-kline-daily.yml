@@ -1,9 +1,9 @@
 name: Forex K-line Daily Collection
 
 on:
-  schedule:
-    # Monday-Saturday 05:00 UTC+8 = Sunday-Friday 21:00 UTC
-    - cron: '0 21 * * 0-5'
+  # schedule:
+  #   # Monday-Saturday 05:00 UTC+8 = Sunday-Friday 21:00 UTC
+  #   - cron: '0 21 * * 0-5'
   workflow_dispatch:
     inputs:
       broker:
@@ -46,7 +46,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        broker: ${{ fromJSON(github.event.inputs.broker == 'all' && '["pepperstone","capitalcom"]' || format('["{0}"]', github.event.inputs.broker || 'pepperstone')) }}
+        broker: ${{ fromJSON((github.event_name == 'schedule' || github.event.inputs.broker == 'all') && '["pepperstone","capitalcom"]' || format('["{0}"]', github.event.inputs.broker || 'pepperstone')) }}
 
     steps:
       # ============================================================
