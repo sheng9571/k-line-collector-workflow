@@ -41,7 +41,8 @@ jobs:
       - name: Run daily collection
         run: |
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e LAST_TS_CACHE_PATH=/app/cache/last_ts.json \
             -e LAST_TS_OUTPUT_PATH=/app/output/last_ts.json \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \

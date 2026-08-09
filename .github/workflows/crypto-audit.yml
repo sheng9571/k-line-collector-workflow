@@ -36,7 +36,8 @@ jobs:
           chmod -R 777 /tmp/audit-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e AUDIT_OUTPUT_DIR=/tmp/audit-output \
             -v /tmp/audit-output:/tmp/audit-output \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -74,4 +75,4 @@ jobs:
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
       K_LINE_COLLECTOR_PAT: ${{ secrets.K_LINE_COLLECTOR_PAT }}
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_TOKEN_CRYPTO: ${{ secrets.HF_TOKEN_CRYPTO }}

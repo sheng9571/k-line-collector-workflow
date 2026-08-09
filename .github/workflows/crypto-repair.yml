@@ -18,7 +18,7 @@ on:
         required: true
       K_LINE_COLLECTOR_PAT:
         required: true
-      HF_TOKEN:
+      HF_TOKEN_CRYPTO:
         required: true
 
   workflow_dispatch:
@@ -75,7 +75,8 @@ jobs:
           echo "Running: crypto repair $CLI_ARGS"
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e AUDIT_JSON_PATH=/app/audit/audit.json \
             -v /tmp/repair-output:/app/data \
             -v ${{ github.workspace }}/reports/crypto:/app/audit:ro \

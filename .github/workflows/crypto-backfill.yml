@@ -38,7 +38,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -79,7 +80,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -119,7 +121,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -159,7 +162,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -199,7 +203,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -239,7 +244,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -279,7 +285,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -319,7 +326,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -359,7 +367,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -399,7 +408,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \
@@ -439,7 +449,8 @@ jobs:
           mkdir -p /tmp/collector-output
 
           docker run --rm \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_TOKEN_CRYPTO=${{ secrets.HF_TOKEN_CRYPTO }} \
+            -e HF_REPO_CRYPTO=${{ secrets.HF_REPO_CRYPTO }} \
             -e REMAINING_FILE=/tmp/remaining_symbols.txt \
             -v /tmp/collector-output:/tmp \
             -v ${{ github.workspace }}/k-line-collector/common:/app/common:ro \

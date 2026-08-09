@@ -1,0 +1,275 @@
+name: Forex K-line Daily Collection
+
+on:
+  schedule:
+    # Run at 22:00 UTC (market close Friday) and 06:00 UTC (daily)
+    - cron: '0 22 * * 5'  # Friday 22:00 UTC
+    - cron: '0 6 * * 1-5'  # Monday-Friday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      broker:
+        description: 'Broker to collect from'
+        required: true
+        default: 'pepperstone'
+        type: choice
+        options:
+          - pepperstone
+          - capitalcom
+      mode:
+        description: 'Collection mode'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+          - daily
+          - backfill
+      symbols:
+        description: 'Comma-separated symbols (empty = all)'
+        required: false
+        default: ''
+      timeframes:
+        description: 'Comma-separated timeframes (empty = default)'
+        required: false
+        default: 'M1,M5,H1,D1'
+      keep_alive_minutes:
+        description: 'Minutes to keep runner alive for debugging'
+        required: false
+        default: '0'
+
+jobs:
+  collect-klines:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    steps:
+      # ============================================================
+      # Free disk space
+      # ============================================================
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af || true
+          df -h
+
+      # ============================================================
+      # Checkout repos
+      # ============================================================
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      - name: Clone collector repo
+        run: |
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git \
+            collector
+
+      # ============================================================
+      # Docker setup
+      # ============================================================
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull Docker image
+        run: |
+          docker pull ghcr.io/sheng9571/k-line-collector/forex-mt5:latest
+          docker tag ghcr.io/sheng9571/k-line-collector/forex-mt5:latest forex-mt5:latest
+
+      # ============================================================
+      # Determine parameters
+      # ============================================================
+      - name: Set collection parameters
+        id: params
+        run: |
+          # Defaults for scheduled runs
+          BROKER="${{ inputs.broker || 'pepperstone' }}"
+          MODE="${{ inputs.mode || 'daily' }}"
+          SYMBOLS="${{ inputs.symbols }}"
+          TIMEFRAMES="${{ inputs.timeframes || 'M1,M5,H1,D1' }}"
+          KEEP_ALIVE="${{ inputs.keep_alive_minutes || '0' }}"
+          
+          echo "broker=$BROKER" >> $GITHUB_OUTPUT
+          echo "mode=$MODE" >> $GITHUB_OUTPUT
+          echo "symbols=$SYMBOLS" >> $GITHUB_OUTPUT
+          echo "timeframes=$TIMEFRAMES" >> $GITHUB_OUTPUT
+          echo "keep_alive=$KEEP_ALIVE" >> $GITHUB_OUTPUT
+          
+          echo "Collection parameters:"
+          echo "  Broker: $BROKER"
+          echo "  Mode: $MODE"
+          echo "  Symbols: ${SYMBOLS:-all}"
+          echo "  Timeframes: $TIMEFRAMES"
+
+      # ============================================================
+      # Start container
+      # ============================================================
+      - name: Start container
+        run: |
+          docker run -d \
+            --name kline-collector \
+            --shm-size=1g \
+            --dns 8.8.8.8 \
+            --dns 8.8.4.4 \
+            -e DISPLAY=:99 \
+            -e RUN_MODE=interactive \
+            -e SOPS_AGE_KEY=${{ secrets.SOPS_AGE_KEY }} \
+            -e HF_TOKEN_FOREX=${{ secrets.HF_TOKEN_FOREX }} \
+            -e HF_REPO_FOREX=${{ secrets.HF_REPO_FOREX }} \
+            -v ${{ github.workspace }}/collector/forex/credentials.enc.yaml:/opt/forex/credentials.enc.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/brokers.yaml:/opt/forex/brokers.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/symbol_metadata.yaml:/opt/forex/symbol_metadata.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/symbols:/opt/forex/symbols:ro \
+            -v ${{ github.workspace }}/collector/forex/timeframes.yaml:/opt/forex/timeframes.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/src:/opt/forex/src:ro \
+            -v ${{ github.workspace }}/reports/forex/symbols:/opt/reports/forex/symbols:ro \
+            forex-mt5:latest
+
+          echo "Container started. Waiting for services..."
+          sleep 30
+
+      # ============================================================
+      # Run K-line collection
+      # ============================================================
+      - name: Collect K-lines
+        run: |
+          BROKER="${{ steps.params.outputs.broker }}"
+          MODE="${{ steps.params.outputs.mode }}"
+          SYMBOLS="${{ steps.params.outputs.symbols }}"
+          TIMEFRAMES="${{ steps.params.outputs.timeframes }}"
+          
+          # Build command
+          CMD="wine /root/.wine/drive_c/Python312/python.exe /opt/forex/src/main.py"
+          CMD="$CMD --mode $MODE --broker $BROKER"
+          CMD="$CMD --data-dir /opt/data/forex"
+          CMD="$CMD --config-dir /opt/forex"
+          CMD="$CMD --symbols-dir /opt/reports/forex/symbols"
+          CMD="$CMD --output-json /opt/data/collection_results.json"
+          
+          if [ -n "$SYMBOLS" ]; then
+            CMD="$CMD --symbols $SYMBOLS"
+          fi
+          
+          if [ -n "$TIMEFRAMES" ]; then
+            CMD="$CMD --timeframes $TIMEFRAMES"
+          fi
+          
+          echo "Running: $CMD"
+          
+          docker exec kline-collector bash -c "
+            source /usr/local/bin/decrypt-credentials.sh
+            $CMD
+            wineserver -k || true
+          " || true
+          
+          # Copy results
+          mkdir -p ./data
+          docker cp kline-collector:/opt/data/. ./data/ 2>/dev/null || true
+          
+          echo ""
+          echo "=== Collection Results ==="
+          if [ -f ./data/collection_results.json ]; then
+            cat ./data/collection_results.json
+          else
+            echo "No results file found"
+          fi
+
+      # ============================================================
+      # Upload to HuggingFace (optional)
+      # ============================================================
+      - name: Upload to HuggingFace
+        if: env.HF_REPO_FOREX != ''
+        env:
+          HF_TOKEN_FOREX: ${{ secrets.HF_TOKEN_FOREX }}
+          HF_REPO_FOREX: ${{ secrets.HF_REPO_FOREX }}
+        run: |
+          if [ ! -d "./data/forex" ]; then
+            echo "No data to upload"
+            exit 0
+          fi
+          
+          echo "Uploading to HuggingFace: $HF_REPO_FOREX"
+          pip install huggingface_hub
+          
+          python3 << 'EOF'
+          import os
+          from pathlib import Path
+          from huggingface_hub import HfApi
+          
+          hf_token = os.environ.get("HF_TOKEN_FOREX")
+          hf_repo = os.environ.get("HF_REPO_FOREX")
+          
+          if not hf_token or not hf_repo:
+              print("HF_TOKEN_FOREX or HF_REPO_FOREX not set, skipping upload")
+              exit(0)
+          
+          api = HfApi(token=hf_token)
+          data_dir = Path("./data/forex")
+          
+          for parquet_file in data_dir.rglob("*.parquet"):
+              rel_path = parquet_file.relative_to(data_dir)
+              path_in_repo = f"data/forex/{rel_path}"
+              
+              print(f"Uploading: {parquet_file} -> {path_in_repo}")
+              api.upload_file(
+                  path_or_fileobj=str(parquet_file),
+                  path_in_repo=path_in_repo,
+                  repo_id=hf_repo,
+                  repo_type="dataset",
+              )
+          
+          print("Upload complete")
+          EOF
+
+      # ============================================================
+      # Keep alive for debugging
+      # ============================================================
+      - name: Keep alive
+        if: ${{ steps.params.outputs.keep_alive != '0' }}
+        run: |
+          MINUTES=${{ steps.params.outputs.keep_alive }}
+          echo "Keeping runner alive for $MINUTES minutes..."
+          docker logs kline-collector --tail 50 2>&1 || true
+          sleep $((MINUTES * 60))
+
+      # ============================================================
+      # Cleanup
+      # ============================================================
+      - name: Container logs
+        if: always()
+        run: |
+          docker logs kline-collector > /tmp/container-stdout.log 2> /tmp/container-stderr.log || true
+          echo "=== Container stdout (last 100) ==="
+          tail -100 /tmp/container-stdout.log
+          echo ""
+          echo "=== Container stderr (last 100) ==="
+          tail -100 /tmp/container-stderr.log
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop kline-collector 2>/dev/null || true
+          docker rm kline-collector 2>/dev/null || true
+
+      # ============================================================
+      # Upload artifacts
+      # ============================================================
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forex-kline-collection
+          path: |
+            ./data/collection_results.json
+            ./data/forex/**/*.parquet
+            /tmp/container-stdout.log
+            /tmp/container-stderr.log
+          if-no-files-found: warn
+          retention-days: 7

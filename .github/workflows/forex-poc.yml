@@ -13,7 +13,7 @@ on:
         default: ''
 
 env:
-  HF_REPO: "sheng9571/kline-forex"
+  HF_REPO_FOREX: "sheng9571/kline-forex"
 
 jobs:
   mt5-poc:
@@ -44,8 +44,8 @@ jobs:
             -e RUN_MODE=interactive \
             -e MT5_BROKER=${{ inputs.broker }} \
             -e SOPS_AGE_KEY=${{ secrets.SOPS_AGE_KEY }} \
-            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
-            -e HF_REPO=${{ env.HF_REPO }} \
+            -e HF_TOKEN_FOREX=${{ secrets.HF_TOKEN_FOREX }} \
+            -e HF_REPO_FOREX=${{ env.HF_REPO_FOREX }} \
             -e FALLBACK_REPO_OWNER=${{ github.repository_owner }} \
             -v ${{ github.workspace }}/collector/forex/credentials.enc.yaml:/opt/forex/credentials.enc.yaml:ro \
             -v ${{ github.workspace }}/collector/forex/brokers.yaml:/opt/forex/brokers.yaml:ro \
