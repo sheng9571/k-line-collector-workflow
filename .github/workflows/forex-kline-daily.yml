@@ -31,6 +31,11 @@ on:
         description: 'Comma-separated timeframes (empty = all 15: 1min,3min,5min,10min,15min,30min,1h,2h,4h,6h,8h,12h,D1,W1,M1)'
         required: false
         default: ''
+      force_restart:
+        description: 'Force restart (ignore existing state, start fresh)'
+        required: false
+        default: false
+        type: boolean
       keep_alive_minutes:
         description: 'Minutes to keep runner alive for debugging'
         required: false
@@ -108,18 +113,42 @@ jobs:
           SYMBOLS="${{ inputs.symbols }}"
           TIMEFRAMES="${{ inputs.timeframes }}"
           KEEP_ALIVE="${{ inputs.keep_alive_minutes || '0' }}"
-          
+          FORCE_RESTART="${{ inputs.force_restart || 'false' }}"
+
+          # Determine state cache key based on mode
+          if [ "$MODE" = "backfill" ]; then
+            STATE_CACHE_KEY="forex-backfill-state-${BROKER}"
+          else
+            STATE_CACHE_KEY="forex-daily-state-${BROKER}"
+          fi
+
           echo "broker=$BROKER" >> $GITHUB_OUTPUT
           echo "mode=$MODE" >> $GITHUB_OUTPUT
           echo "symbols=$SYMBOLS" >> $GITHUB_OUTPUT
           echo "timeframes=$TIMEFRAMES" >> $GITHUB_OUTPUT
           echo "keep_alive=$KEEP_ALIVE" >> $GITHUB_OUTPUT
-          
+          echo "force_restart=$FORCE_RESTART" >> $GITHUB_OUTPUT
+          echo "state_cache_key=$STATE_CACHE_KEY" >> $GITHUB_OUTPUT
+
           echo "Collection parameters:"
           echo "  Broker: $BROKER"
           echo "  Mode: $MODE"
           echo "  Symbols: ${SYMBOLS:-all}"
           echo "  Timeframes: ${TIMEFRAMES:-all (15 native MT5)}"
+          echo "  Force restart: $FORCE_RESTART"
+          echo "  State cache key: $STATE_CACHE_KEY"
+
+      # ============================================================
+      # Restore state cache
+      # ============================================================
+
+      - name: Restore state cache
+        # Only restore state when running all symbols (no specific symbol specified)
+        if: ${{ inputs.symbols == '' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: ./state
+          key: ${{ steps.params.outputs.state_cache_key }}
 
       # ============================================================
       # Start container
@@ -325,7 +354,8 @@ jobs:
           MODE="${{ steps.params.outputs.mode }}"
           SYMBOLS="${{ steps.params.outputs.symbols }}"
           TIMEFRAMES="${{ steps.params.outputs.timeframes }}"
-          
+          FORCE_RESTART="${{ steps.params.outputs.force_restart }}"
+
           # Build command
           CMD="wine /root/.wine/drive_c/Python312/python.exe /opt/forex/src/main.py"
           CMD="$CMD --mode $MODE --broker $BROKER"
@@ -334,27 +364,48 @@ jobs:
           CMD="$CMD --symbols-dir /opt/reports/forex/symbols"
           CMD="$CMD --skip-symbol-export"
           CMD="$CMD --output-json /opt/data/collection_results.json"
-          
+
+          # State file (only when running all symbols)
+          if [ -z "$SYMBOLS" ]; then
+            CMD="$CMD --state-file /opt/data/run_state.json"
+          fi
+
+          if [ "$FORCE_RESTART" = "true" ]; then
+            CMD="$CMD --force-restart"
+          fi
+
           if [ -n "$SYMBOLS" ]; then
             CMD="$CMD --symbols $SYMBOLS"
           fi
-          
+
           if [ -n "$TIMEFRAMES" ]; then
             CMD="$CMD --timeframes $TIMEFRAMES"
           fi
-          
+
+          # Copy state file into container if it exists
+          if [ -z "$SYMBOLS" ] && [ -f ./state/run_state.json ]; then
+            echo "Restoring state from cache..."
+            docker exec forex-collector mkdir -p /opt/data
+            docker cp ./state/run_state.json forex-collector:/opt/data/run_state.json
+          fi
+
           echo "Running: $CMD"
-          
+
           docker exec forex-collector bash -c "
             source /usr/local/bin/decrypt-credentials.sh
             $CMD
             wineserver -k || true
           "
-          
-          # Copy results
-          mkdir -p ./data
+
+          # Copy results and state
+          mkdir -p ./data ./state
           docker cp forex-collector:/opt/data/. ./data/ 2>/dev/null || true
-          
+
+          # Save state for cache
+          if [ -f ./data/run_state.json ]; then
+            cp ./data/run_state.json ./state/run_state.json
+          fi
+
           echo ""
           echo "=== Collection Results ==="
           if [ -f ./data/collection_results.json ]; then
@@ -362,6 +413,50 @@ jobs:
           else
             echo "No results file found"
           fi
+
+          # Check if needs_more
+          NEEDS_MORE=$(python3 -c "
+          import json, sys
+          try:
+              d = json.load(open('./data/collection_results.json'))
+              print('true' if d.get('needs_more') else 'false')
+          except:
+              print('false')
+          " 2>/dev/null || echo "false")
+          echo "needs_more=$NEEDS_MORE" >> $GITHUB_OUTPUT
+        id: collect
+
+      # ============================================================
+      # Save state cache
+      # ============================================================
+
+      - name: Save state cache
+        if: ${{ inputs.symbols == '' && always() }}
+        uses: actions/cache/save@v4
+        with:
+          path: ./state
+          key: ${{ steps.params.outputs.state_cache_key }}
+
+      # ============================================================
+      # Trigger next run if needed
+      # ============================================================
+
+      - name: Trigger next run
+        if: ${{ steps.collect.outputs.needs_more == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.K_LINE_COLLECTOR_PAT }}
+        run: |
+          echo "Time limit reached, triggering next run..."
+          sleep 30
+          gh workflow run forex-kline-daily.yml \
+            --repo ${{ github.repository }} \
+            --ref main \
+            --field broker=${{ steps.params.outputs.broker }} \
+            --field mode=${{ steps.params.outputs.mode }} \
+            --field symbols="" \
+            --field timeframes="${{ steps.params.outputs.timeframes }}" \
+            --field force_restart=false \
+            --field keep_alive_minutes=0
 
       # ============================================================
       # Keep alive (optional)
