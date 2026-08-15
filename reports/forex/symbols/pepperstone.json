@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-08-15T04:41:16.916504+00:00",
+  "generated_at_utc": "2026-08-15T05:19:46.718676+00:00",
   "broker_id": "pepperstone",
   "mt5_version": [
     500,
@@ -98869,7 +98869,7 @@
       "order_mode": 127,
       "order_gtc_mode": 0,
       "point": 0.01,
-      "trade_tick_value": 0.012293016337418711,
+      "trade_tick_value": 0.0,
       "trade_tick_size": 0.01,
       "trade_contract_size": 1.0,
       "volume_min": 1.0,
