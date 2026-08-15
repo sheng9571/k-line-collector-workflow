@@ -115,8 +115,10 @@ jobs:
           KEEP_ALIVE="${{ inputs.keep_alive_minutes || '0' }}"
           FORCE_RESTART="${{ inputs.force_restart || 'false' }}"
 
-          # Determine state cache key based on mode
-          if [ "$MODE" = "backfill" ]; then
+          # Determine state cache key based on mode and whether symbols are specified
+          if [ -n "$SYMBOLS" ]; then
+            STATE_CACHE_KEY="forex-backfill-state-manually"
+          elif [ "$MODE" = "backfill" ]; then
             STATE_CACHE_KEY="forex-backfill-state-${BROKER}"
           else
             STATE_CACHE_KEY="forex-daily-state-${BROKER}"
@@ -129,6 +131,7 @@ jobs:
           echo "keep_alive=$KEEP_ALIVE" >> $GITHUB_OUTPUT
           echo "force_restart=$FORCE_RESTART" >> $GITHUB_OUTPUT
           echo "state_cache_key=$STATE_CACHE_KEY" >> $GITHUB_OUTPUT
+          echo "run_started_at=$(date +%s)" >> $GITHUB_OUTPUT
 
           echo "Collection parameters:"
           echo "  Broker: $BROKER"
@@ -169,6 +172,7 @@ jobs:
             -e HF_TOKEN_FOREX=${{ secrets.HF_TOKEN_FOREX }} \
             -e HF_REPO_FOREX=${{ secrets.HF_REPO_FOREX }} \
             -e FALLBACK_REPO_OWNER=${{ github.repository_owner }} \
+            -e RUN_STARTED_AT=${{ steps.params.outputs.run_started_at }} \
             -v ${{ github.workspace }}/collector/forex/credentials.enc.yaml:/opt/forex/credentials.enc.yaml:ro \
             -v ${{ github.workspace }}/collector/forex/brokers.yaml:/opt/forex/brokers.yaml:ro \
             -v ${{ github.workspace }}/collector/forex/symbol_metadata.yaml:/opt/forex/symbol_metadata.yaml:ro \
@@ -453,10 +457,18 @@ jobs:
             --ref main \
             --field broker=${{ steps.params.outputs.broker }} \
             --field mode=${{ steps.params.outputs.mode }} \
-            --field symbols="" \
+            --field symbols="${{ steps.params.outputs.symbols }}" \
             --field timeframes="${{ steps.params.outputs.timeframes }}" \
             --field force_restart=false \
             --field keep_alive_minutes=0
+
+      - name: Clear manually state on completion
+        # When manual single-symbol run completes with no more work, overwrite state with empty
+        if: ${{ inputs.symbols != '' && steps.collect.outputs.needs_more == 'false' }}
+        run: |
+          mkdir -p ./state
+          echo '{"version":"1","completed":true,"symbols_todo":[],"symbols_done":[],"symbols_failed":[]}' > ./state/run_state.json
+          echo "Manual run complete, cleared forex-backfill-state-manually"
 
       # ============================================================
       # Keep alive (optional)
