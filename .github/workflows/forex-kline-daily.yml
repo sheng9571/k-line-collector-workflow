@@ -150,7 +150,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ./state
-          key: ${{ steps.params.outputs.state_cache_key }}
+          key: ${{ steps.params.outputs.state_cache_key }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ steps.params.outputs.state_cache_key }}-
 
       # ============================================================
       # Start container
@@ -463,18 +465,23 @@ jobs:
       # Save state cache
       # ============================================================
 
-      - name: Delete old state cache
-        if: ${{ always() }}
-        run: gh cache delete ${{ steps.params.outputs.state_cache_key }} || true
-        env:
-          GH_TOKEN: ${{ github.token }}
-
       - name: Save state cache
         if: ${{ always() }}
         uses: actions/cache/save@v4
         with:
           path: ./state
-          key: ${{ steps.params.outputs.state_cache_key }}
+          key: ${{ steps.params.outputs.state_cache_key }}-${{ github.run_id }}
+
+      - name: Clean old state caches
+        if: ${{ always() }}
+        run: |
+          PREFIX="${{ steps.params.outputs.state_cache_key }}-"
+          CURRENT_KEY="${{ steps.params.outputs.state_cache_key }}-${{ github.run_id }}"
+          gh cache list --key "$PREFIX" --json key --jq '.[].key' \
+            | grep -v "^${CURRENT_KEY}$" \
+            | xargs -r -I{} gh cache delete "{}" || true
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       # ============================================================
       # Trigger next run if needed
