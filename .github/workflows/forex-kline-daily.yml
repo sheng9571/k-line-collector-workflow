@@ -368,6 +368,12 @@ jobs:
           CMD="$CMD --output-json /opt/data/collection_results.json"
           CMD="$CMD --state-file /opt/data/run_state.json"
 
+          # Daily mode: pass last_ts cache for incremental updates
+          if [ "$MODE" = "daily" ]; then
+            CMD="$CMD --last-ts-cache /opt/data/last_ts_cache.json"
+            CMD="$CMD --last-ts-output /opt/data/last_ts_cache.json"
+          fi
+
           if [ "$FORCE_RESTART" = "true" ]; then
             CMD="$CMD --force-restart"
           fi
@@ -387,6 +393,13 @@ jobs:
             docker cp ./state/run_state.json forex-collector:/opt/data/run_state.json
           fi
 
+          # Daily mode: restore last_ts cache into container if it exists
+          if [ "$MODE" = "daily" ] && [ -f ./state/last_ts_cache.json ]; then
+            echo "Restoring last_ts cache from cache..."
+            docker exec forex-collector mkdir -p /opt/data
+            docker cp ./state/last_ts_cache.json forex-collector:/opt/data/last_ts_cache.json
+          fi
+
           echo "Running: $CMD"
 
           docker exec forex-collector bash -c "
@@ -402,6 +415,11 @@ jobs:
           # Save state for cache
           if [ -f ./data/run_state.json ]; then
             cp ./data/run_state.json ./state/run_state.json
+          fi
+
+          # Daily mode: save last_ts cache for next run
+          if [ "$MODE" = "daily" ] && [ -f ./data/last_ts_cache.json ]; then
+            cp ./data/last_ts_cache.json ./state/last_ts_cache.json
           fi
 
           echo ""
