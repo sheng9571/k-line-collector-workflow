@@ -456,7 +456,7 @@ jobs:
       # ============================================================
 
       - name: Trigger next run
-        if: ${{ steps.collect.outputs.needs_more == 'true' }}
+        if: ${{ always() && steps.collect.outputs.needs_more == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.K_LINE_COLLECTOR_PAT }}
         run: |
@@ -474,7 +474,7 @@ jobs:
 
       - name: Clear manually state on completion
         # When manual single-symbol run completes with no more work, overwrite state with empty
-        if: ${{ inputs.symbols != '' && steps.collect.outputs.needs_more == 'false' }}
+        if: ${{ always() && inputs.symbols != '' && steps.collect.outputs.needs_more == 'false' }}
         run: |
           mkdir -p ./state
           echo '{"version":"1","completed":true,"symbols_todo":[],"symbols_done":[],"symbols_failed":[]}' > ./state/run_state.json
