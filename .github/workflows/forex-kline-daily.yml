@@ -46,6 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
 
     strategy:
       max-parallel: 1
@@ -462,6 +463,12 @@ jobs:
       # Save state cache
       # ============================================================
 
+      - name: Delete old state cache
+        if: ${{ always() }}
+        run: gh cache delete ${{ steps.params.outputs.state_cache_key }} || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Save state cache
         if: ${{ always() }}
         uses: actions/cache/save@v4
@@ -476,7 +483,7 @@ jobs:
       - name: Trigger next run
         if: ${{ always() && steps.collect.outputs.needs_more == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.K_LINE_COLLECTOR_PAT }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "Time limit reached, triggering next run..."
           sleep 30
