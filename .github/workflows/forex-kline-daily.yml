@@ -146,8 +146,6 @@ jobs:
       # ============================================================
 
       - name: Restore state cache
-        # Only restore state when running all symbols (no specific symbol specified)
-        if: ${{ inputs.symbols == '' }}
         uses: actions/cache/restore@v4
         with:
           path: ./state
@@ -368,11 +366,7 @@ jobs:
           CMD="$CMD --symbols-dir /opt/reports/forex/symbols"
           CMD="$CMD --skip-symbol-export"
           CMD="$CMD --output-json /opt/data/collection_results.json"
-
-          # State file (only when running all symbols)
-          if [ -z "$SYMBOLS" ]; then
-            CMD="$CMD --state-file /opt/data/run_state.json"
-          fi
+          CMD="$CMD --state-file /opt/data/run_state.json"
 
           if [ "$FORCE_RESTART" = "true" ]; then
             CMD="$CMD --force-restart"
@@ -387,7 +381,7 @@ jobs:
           fi
 
           # Copy state file into container if it exists
-          if [ -z "$SYMBOLS" ] && [ -f ./state/run_state.json ]; then
+          if [ -f ./state/run_state.json ]; then
             echo "Restoring state from cache..."
             docker exec forex-collector mkdir -p /opt/data
             docker cp ./state/run_state.json forex-collector:/opt/data/run_state.json
@@ -399,9 +393,9 @@ jobs:
             source /usr/local/bin/decrypt-credentials.sh
             $CMD
             wineserver -k || true
-          "
+          " || true
 
-          # Copy results and state
+          # Copy results and state (always, even if collection failed)
           mkdir -p ./data ./state
           docker cp forex-collector:/opt/data/. ./data/ 2>/dev/null || true
 
@@ -428,6 +422,22 @@ jobs:
               print('false')
           " 2>/dev/null || echo "false")
           echo "needs_more=$NEEDS_MORE" >> $GITHUB_OUTPUT
+
+          # Re-exit with error if collection failed (after outputs are written)
+          if [ -f ./data/collection_results.json ]; then
+            ERRORS=$(python3 -c "
+          import json, sys
+          try:
+              d = json.load(open('./data/collection_results.json'))
+              print(d.get('summary', {}).get('errors', 0))
+          except:
+              print(0)
+          " 2>/dev/null || echo "0")
+            if [ "$ERRORS" -gt "0" ]; then
+              echo "Collection completed with $ERRORS error(s)"
+              exit 1
+            fi
+          fi
         id: collect
 
       # ============================================================
@@ -435,7 +445,7 @@ jobs:
       # ============================================================
 
       - name: Save state cache
-        if: ${{ inputs.symbols == '' && always() }}
+        if: ${{ always() }}
         uses: actions/cache/save@v4
         with:
           path: ./state
