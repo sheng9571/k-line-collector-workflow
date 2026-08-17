@@ -36,6 +36,11 @@ on:
         required: false
         default: false
         type: boolean
+      skip_hf_upload:
+        description: 'Skip HuggingFace upload (debug: collect only, state not updated)'
+        required: false
+        default: false
+        type: boolean
       keep_alive_minutes:
         description: 'Minutes to keep runner alive for debugging'
         required: false
@@ -360,6 +365,7 @@ jobs:
           SYMBOLS="${{ steps.params.outputs.symbols }}"
           TIMEFRAMES="${{ steps.params.outputs.timeframes }}"
           FORCE_RESTART="${{ steps.params.outputs.force_restart }}"
+          SKIP_HF_UPLOAD="${{ inputs.skip_hf_upload || 'false' }}"
 
           # Build command
           CMD="wine /root/.wine/drive_c/Python312/python.exe /opt/forex/src/main.py"
@@ -379,6 +385,10 @@ jobs:
 
           if [ "$FORCE_RESTART" = "true" ]; then
             CMD="$CMD --force-restart"
+          fi
+
+          if [ "$SKIP_HF_UPLOAD" = "true" ]; then
+            CMD="$CMD --skip-hf-upload"
           fi
 
           if [ -n "$SYMBOLS" ]; then
