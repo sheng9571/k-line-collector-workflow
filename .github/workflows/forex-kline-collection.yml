@@ -41,6 +41,10 @@ on:
         required: false
         default: false
         type: boolean
+      continuation_run_id:
+        description: 'Internal: run ID of the originating run (set automatically for time-limit continuations)'
+        required: false
+        default: ''
       keep_alive_minutes:
         description: 'Minutes to keep runner alive for debugging'
         required: false
@@ -183,6 +187,7 @@ jobs:
             -e HF_REPO_FOREX=${{ secrets.HF_REPO_FOREX }} \
             -e FALLBACK_REPO_OWNER=${{ github.repository_owner }} \
             -e RUN_STARTED_AT=${{ steps.params.outputs.run_started_at }} \
+            -e WORKFLOW_RUN_ID=${{ inputs.continuation_run_id || github.run_id }} \
             -v ${{ github.workspace }}/collector/forex/credentials.enc.yaml:/opt/forex/credentials.enc.yaml:ro \
             -v ${{ github.workspace }}/collector/forex/brokers.yaml:/opt/forex/brokers.yaml:ro \
             -v ${{ github.workspace }}/collector/forex/symbol_metadata.yaml:/opt/forex/symbol_metadata.yaml:ro \
@@ -524,7 +529,8 @@ jobs:
             --field symbols="${{ steps.params.outputs.symbols }}" \
             --field timeframes="${{ steps.params.outputs.timeframes }}" \
             --field force_restart=false \
-            --field keep_alive_minutes=0
+            --field keep_alive_minutes=0 \
+            --field continuation_run_id=${{ inputs.continuation_run_id || github.run_id }}
 
       - name: Clear manually state on completion
         # When manual single-symbol run completes with no more work, overwrite state with empty
