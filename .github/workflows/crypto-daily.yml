@@ -70,9 +70,11 @@ jobs:
 
       - name: Delete old caches
         run: |
-          gh cache list --json key,id \
-            | jq -r '.[] | select(.key | startswith("crypto-last-ts-")) | select(.key != "crypto-last-ts-${{ github.run_id }}") | .id' \
-            | xargs -r -I{} gh cache delete {}
+          CURRENT_KEY="crypto-last-ts-${{ github.run_id }}"
+          gh cache list --json key --jq '.[].key' \
+            | grep '^crypto-last-ts-' \
+            | grep -v "^${CURRENT_KEY}$" \
+            | xargs -r -I{} gh cache delete "{}" || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         if: always()
