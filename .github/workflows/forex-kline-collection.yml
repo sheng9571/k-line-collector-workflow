@@ -1,9 +1,9 @@
-name: Forex K-line Daily Collection
+name: Forex K-line Collection
 
 on:
-  # schedule:
-  #   # Monday-Saturday 05:00 UTC+8 = Sunday-Friday 21:00 UTC
-  #   - cron: '0 21 * * 0-5'
+  schedule:
+    # Tuesday-Saturday 05:00 UTC+8 = Monday-Friday 21:00 UTC
+    - cron: '0 21 * * 1-5'
   workflow_dispatch:
     inputs:
       broker:
@@ -52,6 +52,10 @@ jobs:
     permissions:
       contents: write
       actions: write
+
+    concurrency:
+      group: forex-collection-${{ matrix.broker }}-${{ inputs.mode || 'daily' }}
+      cancel-in-progress: ${{ inputs.mode != 'backfill' }}
 
     strategy:
       max-parallel: 1
@@ -504,7 +508,7 @@ jobs:
         run: |
           echo "Time limit reached, triggering next run..."
           sleep 30
-          gh workflow run forex-kline-daily.yml \
+          gh workflow run forex-kline-collection.yml \
             --repo ${{ github.repository }} \
             --ref main \
             --field broker=${{ steps.params.outputs.broker }} \
