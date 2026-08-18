@@ -61,18 +61,18 @@ jobs:
           fi
         if: always()
 
-      - name: Delete old caches
-        run: |
-          gh cache list --json key,id \
-            | jq -r '.[] | select(.key | startswith("crypto-last-ts-")) | .id' \
-            | xargs -r -I{} gh cache delete {}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        if: always()
-
       - name: Save last_ts cache
         uses: actions/cache/save@v4
         with:
           path: /tmp/cache
           key: crypto-last-ts-${{ github.run_id }}
+        if: always()
+
+      - name: Delete old caches
+        run: |
+          gh cache list --json key,id \
+            | jq -r '.[] | select(.key | startswith("crypto-last-ts-")) | select(.key != "crypto-last-ts-${{ github.run_id }}") | .id' \
+            | xargs -r -I{} gh cache delete {}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         if: always()
