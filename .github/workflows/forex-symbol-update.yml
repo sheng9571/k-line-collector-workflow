@@ -1,0 +1,386 @@
+name: Forex Symbol Update
+
+# Updates {broker}.json (symbol metadata) and {broker}_symbol_sessions.json
+# (trading session schedules) for all configured forex brokers, then opens
+# a pull request with the changes.
+#
+# Run this workflow manually whenever:
+#   - A new broker is added
+#   - Broker symbol list changes significantly
+#   - Trading session schedules need refreshing
+#
+# The main forex-kline-collection workflow reads {broker}.json from the
+# repository (committed by this workflow) for symbol filtering.
+
+on:
+  workflow_dispatch:
+    inputs:
+      brokers:
+        description: 'Brokers to update (comma-separated: pepperstone,capitalcom or "all")'
+        required: false
+        default: 'all'
+      keep_alive_minutes:
+        description: 'Minutes to keep runner alive for debugging (0 = no debug sleep)'
+        required: false
+        default: '0'
+
+jobs:
+  update-symbols:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # ============================================================
+      # Free disk space
+      # ============================================================
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af || true
+          docker builder prune -af || true
+          df -h
+
+      # ============================================================
+      # Checkout workflow repo
+      # ============================================================
+
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # Clone collector repo
+      # ============================================================
+
+      - name: Clone collector repo
+        run: |
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git \
+            collector
+
+      # ============================================================
+      # Login to ghcr.io and pull image
+      # ============================================================
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull Docker image
+        run: |
+          docker pull ghcr.io/sheng9571/k-line-collector/forex-mt5:latest
+          docker tag ghcr.io/sheng9571/k-line-collector/forex-mt5:latest forex-mt5:latest
+
+      # ============================================================
+      # Start container
+      # ============================================================
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name forex-collector \
+            --shm-size=1g \
+            --dns 8.8.8.8 \
+            --dns 8.8.4.4 \
+            -p 6080:6080 \
+            -e DISPLAY=:99 \
+            -e RUN_MODE=interactive \
+            -e SOPS_AGE_KEY=${{ secrets.SOPS_AGE_KEY }} \
+            -v ${{ github.workspace }}/collector/forex/credentials.enc.yaml:/opt/forex/credentials.enc.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/brokers.yaml:/opt/forex/brokers.yaml:ro \
+            -v ${{ github.workspace }}/collector/forex/src:/opt/forex/src:ro \
+            forex-mt5:latest
+
+          echo "Container started. Waiting for noVNC..."
+          sleep 10
+
+          for i in $(seq 1 24); do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:6080/vnc.html | grep -q "200"; then
+              echo "noVNC is ready!"
+              break
+            fi
+            echo "Waiting for noVNC... attempt $i/24"
+            sleep 10
+          done
+
+      # ============================================================
+      # Cloudflare tunnel
+      # ============================================================
+
+      - name: Download cloudflared
+        run: |
+          wget -q "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" \
+            -O /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          echo "cloudflared downloaded"
+
+      - name: Start Cloudflare tunnel
+        run: |
+          /tmp/cloudflared tunnel --url http://localhost:6080 > /tmp/cloudflared.log 2>&1 &
+          echo $! > /tmp/cloudflared.pid
+
+          TUNNEL_URL=""
+          for i in $(seq 1 20); do
+            sleep 3
+            TUNNEL_URL=$(grep -oP 'https://[a-z0-9\-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1)
+            if [ -n "$TUNNEL_URL" ]; then
+              break
+            fi
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "::error::Cloudflare tunnel URL not detected"
+            cat /tmp/cloudflared.log
+            exit 1
+          fi
+
+          NOVNC_URL="${TUNNEL_URL}/vnc.html"
+          echo "NOVNC_URL=$NOVNC_URL" >> $GITHUB_ENV
+
+      - name: Publish noVNC URL via OneTimeSecret
+        env:
+          OTS_USERNAME: ${{ secrets.OTS_USERNAME }}
+          OTS_API_KEY: ${{ secrets.OTS_API_KEY }}
+          OTS_PASSPHRASE: ${{ secrets.OTS_PASSPHRASE }}
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            -u "${OTS_USERNAME}:${OTS_API_KEY}" \
+            -d "secret=$NOVNC_URL" \
+            -d "passphrase=$OTS_PASSPHRASE" \
+            -d "ttl=1800" \
+            https://eu.onetimesecret.com/api/v1/share)
+
+          SECRET_KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('secret_key',''))" 2>/dev/null || echo "")
+
+          if [ -z "$SECRET_KEY" ]; then
+            echo "::error::Failed to create OTS secret. Check OTS_USERNAME and OTS_API_KEY secrets."
+            exit 1
+          fi
+
+          OTS_DOMAIN=$(echo "$RESPONSE" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          url = data.get('metadata_url', '')
+          if 'eu.onetimesecret.com' in url:
+              print('eu.onetimesecret.com')
+          else:
+              print('onetimesecret.com')
+          " 2>/dev/null || echo "onetimesecret.com")
+
+          OTS_LINK="https://${OTS_DOMAIN}/secret/$SECRET_KEY"
+
+          echo ""
+          echo "========================================================"
+          echo " noVNC ACCESS (via OneTimeSecret)"
+          echo "========================================================"
+          echo " OTS Link: $OTS_LINK"
+          echo " Passphrase: (your OTS_PASSPHRASE secret)"
+          echo " Open the OTS link, enter passphrase, get noVNC URL."
+          echo "========================================================"
+
+      # ============================================================
+      # Resolve broker list
+      # ============================================================
+
+      - name: Resolve broker list
+        id: brokers
+        run: |
+          INPUT="${{ inputs.brokers || 'all' }}"
+          if [ "$INPUT" = "all" ]; then
+            BROKER_LIST="pepperstone capitalcom"
+          else
+            # Convert comma-separated to space-separated
+            BROKER_LIST=$(echo "$INPUT" | tr ',' ' ')
+          fi
+          echo "list=$BROKER_LIST" >> $GITHUB_OUTPUT
+          echo "Brokers to update: $BROKER_LIST"
+
+      # ============================================================
+      # Prepare output directory
+      # ============================================================
+
+      - name: Prepare output directory
+        run: |
+          mkdir -p reports/forex/symbols
+          docker exec forex-collector mkdir -p /opt/reports/forex/symbols
+
+      # ============================================================
+      # Per-broker: export session schedules + symbol metadata
+      # Sequential — MT5 terminals cannot run concurrently
+      # ============================================================
+
+      - name: Export symbol sessions and metadata
+        run: |
+          BROKER_LIST="${{ steps.brokers.outputs.list }}"
+
+          # Broker configuration
+          # server: the MT5 server name used for this broker
+          declare -A BROKER_SERVER=(
+            ["pepperstone"]="Pepperstone-Demo"
+            ["capitalcom"]="Capital.ComBah-Demo"
+          )
+
+          for BROKER in $BROKER_LIST; do
+            SERVER="${BROKER_SERVER[$BROKER]:-}"
+            if [ -z "$SERVER" ]; then
+              echo "::warning::Unknown broker '$BROKER', skipping"
+              continue
+            fi
+
+            echo ""
+            echo "============================================================"
+            echo "Processing broker: $BROKER (server: $SERVER)"
+            echo "============================================================"
+
+            # ----------------------------------------------------------
+            # Step 1: Export session schedules via ExportSymbolSessions.ex5
+            # ----------------------------------------------------------
+            echo "--- Step 1: Export session schedules ---"
+            docker exec forex-collector bash -c "
+              source /usr/local/bin/decrypt-credentials.sh
+              wine /root/.wine/drive_c/Python312/python.exe \
+                /opt/forex/src/run_export_sessions.py \
+                --broker $BROKER \
+                --broker-name $BROKER \
+                --server $SERVER \
+                --output-dir /opt/reports/forex/symbols \
+                --timeout 600
+              wineserver -k || true
+            " || echo "::warning::Session export failed for $BROKER (continuing)"
+
+            # ----------------------------------------------------------
+            # Step 2: Export symbol metadata via main.py --export-only
+            # ----------------------------------------------------------
+            echo "--- Step 2: Export symbol metadata ---"
+            docker exec forex-collector bash -c "
+              source /usr/local/bin/decrypt-credentials.sh
+              wine /root/.wine/drive_c/Python312/python.exe \
+                /opt/forex/src/main.py \
+                --broker $BROKER \
+                --export-only \
+                --symbols-dir /opt/reports/forex/symbols \
+                --config-dir /opt/forex
+              wineserver -k || true
+            " || echo "::warning::Symbol metadata export failed for $BROKER (continuing)"
+
+            echo "Broker $BROKER done."
+          done
+
+      # ============================================================
+      # Copy outputs from container
+      # ============================================================
+
+      - name: Copy outputs from container
+        run: |
+          docker cp forex-collector:/opt/reports/forex/symbols/. ./reports/forex/symbols/ 2>/dev/null || true
+          echo "Files in reports/forex/symbols:"
+          ls -la reports/forex/symbols/ 2>/dev/null || echo "(none)"
+
+      # ============================================================
+      # Merge session data into symbol metadata
+      # ============================================================
+
+      - name: Merge session data into symbols
+        run: |
+          if [ ! -f collector/forex/src/merge_sessions.py ]; then
+            echo "::warning::merge_sessions.py not found, skipping merge"
+            exit 0
+          fi
+
+          SESSION_COUNT=$(ls reports/forex/symbols/*_symbol_sessions.json 2>/dev/null | wc -l)
+          if [ "$SESSION_COUNT" -eq 0 ]; then
+            echo "No session files found, skipping merge"
+            exit 0
+          fi
+
+          echo "Found $SESSION_COUNT session file(s), merging..."
+          python3 collector/forex/src/merge_sessions.py reports/forex/symbols/
+
+          echo ""
+          echo "Merged files:"
+          ls -la reports/forex/symbols/*.json 2>/dev/null || true
+
+      # ============================================================
+      # Create Pull Request
+      # ============================================================
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add reports/forex/symbols/*.json 2>/dev/null || true
+
+          if git diff --staged --quiet; then
+            echo "No symbol changes detected, skipping PR"
+            exit 0
+          fi
+
+          DATE=$(date -u +%Y-%m-%d)
+          BRANCH="chore/forex-symbols-${DATE}-${{ github.run_id }}"
+
+          git checkout -b "$BRANCH"
+          git commit -m "chore(forex): update symbol metadata and sessions ${DATE}"
+          git push -u origin "$BRANCH"
+
+          gh pr create \
+            --title "chore(forex): update symbol metadata and sessions ${DATE}" \
+            --body "Automated symbol update from forex-symbol-update workflow (run ${{ github.run_id }})." \
+            --base main \
+            --head "$BRANCH"
+
+          # Enable auto-merge (requires branch protection with auto-merge enabled)
+          PR_NUMBER=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number')
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr merge "$PR_NUMBER" --auto --squash || \
+              echo "::warning::Auto-merge not available; please merge the PR manually."
+          fi
+
+      # ============================================================
+      # Keep alive (optional debug)
+      # ============================================================
+
+      - name: Keep alive
+        if: ${{ inputs.keep_alive_minutes != '0' && inputs.keep_alive_minutes != '' }}
+        run: |
+          MINUTES="${{ inputs.keep_alive_minutes }}"
+          echo "Keeping runner alive for ${MINUTES} minutes..."
+          echo "Container logs (last 50 lines):"
+          docker logs forex-collector --tail 50 2>&1 || true
+          echo ""
+          echo "You can now connect via noVNC."
+          sleep $((MINUTES * 60))
+          echo "Keep alive timeout reached."
+
+      # ============================================================
+      # Cleanup
+      # ============================================================
+
+      - name: Container logs
+        if: always()
+        run: |
+          docker logs forex-collector > /tmp/container-stdout.log 2> /tmp/container-stderr.log || true
+          echo "=== Container stdout (last 100) ==="
+          tail -100 /tmp/container-stdout.log
+          echo ""
+          echo "=== Container stderr (last 100) ==="
+          tail -100 /tmp/container-stderr.log
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop forex-collector 2>/dev/null || true
+          docker rm forex-collector 2>/dev/null || true
+          if [ -f /tmp/cloudflared.pid ]; then
+            kill $(cat /tmp/cloudflared.pid) 2>/dev/null || true
+          fi

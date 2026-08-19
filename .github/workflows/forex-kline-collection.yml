@@ -292,84 +292,30 @@ jobs:
           echo "========================================================"
 
       # ============================================================
-      # Export symbols
+      # Collect K-lines
       # ============================================================
 
-      - name: Export symbols from MT5
+      - name: Copy symbol JSON into container
         run: |
           BROKER="${{ steps.params.outputs.broker }}"
-          
-          echo "Waiting for container services to start..."
-          sleep 30
 
-          echo "Exporting symbols for broker: $BROKER"
-          
-          docker exec forex-collector bash -c "
-            source /usr/local/bin/decrypt-credentials.sh
-            wine /root/.wine/drive_c/Python312/python.exe /opt/forex/src/main.py \
-              --broker $BROKER \
-              --export-only \
-              --symbols-dir /opt/reports/forex/symbols \
-              --config-dir /opt/forex
-            wineserver -k || true
-          " || true
+          # Symbol JSON files are maintained by the forex-symbol-update workflow.
+          # Copy the latest committed version into the container so the collector
+          # can use them for symbol filtering.
+          docker exec forex-collector mkdir -p /opt/reports/forex/symbols
 
-      # ============================================================
-      # Copy and commit symbols
-      # ============================================================
-
-      - name: Copy symbols from container
-        run: |
-          mkdir -p reports/forex/symbols
-          docker cp forex-collector:/opt/reports/forex/symbols/. ./reports/forex/symbols/ 2>/dev/null || true
-          echo "Symbols copied:"
-          ls -la reports/forex/symbols/ 2>/dev/null || echo "No symbols found"
-
-      - name: Merge session data into symbols
-        run: |
-          # Check if merge script exists
-          if [ ! -f collector/forex/src/merge_sessions.py ]; then
-            echo "::warning::merge_sessions.py not found, skipping session merge"
-            exit 0
-          fi
-
-          # Check if any session files exist
-          SESSION_COUNT=$(ls reports/forex/symbols/*_symbol_sessions.json 2>/dev/null | wc -l)
-          if [ "$SESSION_COUNT" -eq 0 ]; then
-            echo "No session files found, skipping merge"
-            exit 0
-          fi
-
-          echo "Found $SESSION_COUNT session file(s), merging..."
-          python3 collector/forex/src/merge_sessions.py reports/forex/symbols/
-
-          echo ""
-          echo "Merged symbols:"
-          ls -la reports/forex/symbols/*.json 2>/dev/null || true
-
-      - name: Commit and push symbols
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add reports/forex/symbols/*.json 2>/dev/null || true
-
-          if git diff --staged --quiet; then
-            echo "No new symbols to commit"
-          else
-            git commit -m "chore(forex): update ${{ steps.params.outputs.broker }} symbols $(date -u +%Y-%m-%d)"
-            # Retry push up to 3 times to handle concurrent matrix job conflicts
-            for i in 1 2 3; do
-              git pull --rebase origin ${{ github.ref_name }} && git push && echo "Symbols committed and pushed" && break
-              if [ $i -lt 3 ]; then
-                echo "Push failed (attempt $i/3), retrying in 5s..."
-                sleep 5
+          for b in pepperstone capitalcom; do
+            # Only copy the broker(s) relevant to this run
+            if [ "$BROKER" = "all" ] || [ "$BROKER" = "$b" ]; then
+              if [ -f "./reports/forex/symbols/${b}.json" ]; then
+                docker cp "./reports/forex/symbols/${b}.json" \
+                  forex-collector:/opt/reports/forex/symbols/${b}.json
+                echo "Copied ${b}.json into container"
               else
-                echo "Push failed after 3 attempts"
-                exit 1
+                echo "::warning::reports/forex/symbols/${b}.json not found — symbol filtering will be skipped for ${b}"
               fi
-            done
-          fi
+            fi
+          done
 
       # ============================================================
       # Collect K-lines
