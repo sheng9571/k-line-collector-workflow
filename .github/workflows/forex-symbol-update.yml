@@ -241,9 +241,25 @@ jobs:
             echo "============================================================"
 
             # ----------------------------------------------------------
-            # Step 1: Export session schedules via ExportSymbolSessions.ex5
+            # Step 1: Export symbol metadata via main.py --export-only
             # ----------------------------------------------------------
-            echo "--- Step 1: Export session schedules ---"
+            echo "--- Step 1: Export symbol metadata ---"
+            docker exec forex-collector bash -c "
+              source /usr/local/bin/decrypt-credentials.sh
+              wine /root/.wine/drive_c/Python312/python.exe \
+                /opt/forex/src/main.py \
+                --broker $BROKER \
+                --export-only \
+                --symbols-dir /opt/reports/forex/symbols \
+                --config-dir /opt/forex
+              wineserver -k || true
+            " || echo "::warning::Symbol metadata export failed for $BROKER (continuing)"
+
+            # ----------------------------------------------------------
+            # Step 2: Export session schedules via ExportSymbolSessions.ex5
+            # (runs after --export-only so all symbols are warm in MT5)
+            # ----------------------------------------------------------
+            echo "--- Step 2: Export session schedules ---"
             docker exec forex-collector bash -c "
               source /usr/local/bin/decrypt-credentials.sh
               wine /root/.wine/drive_c/Python312/python.exe \
@@ -255,21 +271,6 @@ jobs:
                 --timeout 600
               wineserver -k || true
             " || echo "::warning::Session export failed for $BROKER (continuing)"
-
-            # ----------------------------------------------------------
-            # Step 2: Export symbol metadata via main.py --export-only
-            # ----------------------------------------------------------
-            echo "--- Step 2: Export symbol metadata ---"
-            docker exec forex-collector bash -c "
-              source /usr/local/bin/decrypt-credentials.sh
-              wine /root/.wine/drive_c/Python312/python.exe \
-                /opt/forex/src/main.py \
-                --broker $BROKER \
-                --export-only \
-                --symbols-dir /opt/reports/forex/symbols \
-                --config-dir /opt/forex
-              wineserver -k || true
-            " || echo "::warning::Symbol metadata export failed for $BROKER (continuing)"
 
             echo "Broker $BROKER done."
           done
