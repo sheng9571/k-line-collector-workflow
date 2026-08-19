@@ -334,7 +334,7 @@ jobs:
           fi
 
           # Check if any session files exist
-          SESSION_COUNT=$(ls reports/forex/symbols/*_symbol_sessions_utc.json 2>/dev/null | wc -l)
+          SESSION_COUNT=$(ls reports/forex/symbols/*_symbol_sessions.json 2>/dev/null | wc -l)
           if [ "$SESSION_COUNT" -eq 0 ]; then
             echo "No session files found, skipping merge"
             exit 0
