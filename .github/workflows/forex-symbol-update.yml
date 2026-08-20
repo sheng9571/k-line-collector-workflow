@@ -296,17 +296,20 @@ jobs:
             exit 0
           fi
 
-          SESSION_COUNT=$(ls reports/forex/symbols/*_symbol_sessions.json 2>/dev/null | wc -l)
+          SESSION_COUNT=$(ls reports/forex/symbols/*_symbol_sessions_server.json reports/forex/symbols/*_symbol_sessions.json 2>/dev/null | wc -l)
           if [ "$SESSION_COUNT" -eq 0 ]; then
             echo "No session files found, skipping merge"
             exit 0
           fi
 
           echo "Found $SESSION_COUNT session file(s), merging..."
-          python3 collector/forex/src/merge_sessions.py reports/forex/symbols/
+          # --delete-session-source removes {broker}_symbol_sessions_server.json
+          # after a successful merge so only {broker}.json is committed.
+          python3 collector/forex/src/merge_sessions.py reports/forex/symbols/ \
+            --delete-session-source
 
           echo ""
-          echo "Merged files:"
+          echo "Files after merge:"
           ls -la reports/forex/symbols/*.json 2>/dev/null || true
 
       # ============================================================
@@ -320,7 +323,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add reports/forex/symbols/*.json 2>/dev/null || true
+          # Only commit the canonical broker JSON files.
+          # Intermediate session files are deleted by --delete-session-source.
+          git add reports/forex/symbols/pepperstone.json 2>/dev/null || true
+          git add reports/forex/symbols/capitalcom.json 2>/dev/null || true
 
           if git diff --staged --quiet; then
             echo "No symbol changes detected, skipping PR"
