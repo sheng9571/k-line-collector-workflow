@@ -24,10 +24,6 @@ on:
         required: false
         default: true
         type: boolean
-      keep_alive_minutes:
-        description: 'Minutes to keep runner alive for debugging (0 = off)'
-        required: false
-        default: '0'
 
 jobs:
   collect-tv-fx:
@@ -106,7 +102,7 @@ jobs:
             -e NODE_ENV=production \
             -e SKIP_HF_UPLOAD=${{ inputs.skip_hf_upload || 'true' }} \
             -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
-            -e HF_REPO=${{ secrets.HF_REPO_TV }} \
+            -e HF_REPO=${{ secrets.HF_REPO_FOREX }} \
             -e TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }} \
             -e TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }} \
             -e TV_SESSION=${{ secrets.TV_SESSION }} \
@@ -171,7 +167,7 @@ jobs:
 
           echo "Running: ${CMD}"
 
-          docker exec tv-collector bash -c "${CMD}" || true
+          docker exec tv-collector sh -c "${CMD}" || true
 
           # Copy results and state back to host
           docker cp tv-collector:/app/output/. ./output/ 2>/dev/null || true
@@ -206,17 +202,6 @@ jobs:
             | xargs -r -I{} gh cache delete "{}" || true
         env:
           GH_TOKEN: ${{ github.token }}
-
-      # ============================================================
-      # Keep alive (optional debug)
-      # ============================================================
-      - name: Keep alive
-        if: ${{ inputs.keep_alive_minutes != '0' && inputs.keep_alive_minutes != '' }}
-        run: |
-          MINUTES=${{ inputs.keep_alive_minutes }}
-          echo "Keeping runner alive for ${MINUTES} minutes..."
-          docker logs tv-collector --tail 50 2>&1 || true
-          sleep $((MINUTES * 60))
 
       # ============================================================
       # Cleanup
