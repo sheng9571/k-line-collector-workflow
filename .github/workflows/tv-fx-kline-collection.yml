@@ -1,0 +1,233 @@
+name: TV FX K-line Collection
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Collection mode'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+          - daily
+          - backfill
+      config_file:
+        description: 'Config file path (relative to tv/ in collector repo)'
+        required: false
+        default: 'config/forex.yaml'
+      timeframes:
+        description: 'Comma-separated TV timeframes override (empty = use config)'
+        required: false
+        default: ''
+      skip_hf_upload:
+        description: 'Skip HuggingFace upload (collect only)'
+        required: false
+        default: true
+        type: boolean
+      keep_alive_minutes:
+        description: 'Minutes to keep runner alive for debugging (0 = off)'
+        required: false
+        default: '0'
+
+jobs:
+  collect-tv-fx:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    concurrency:
+      group: tv-fx-collection-${{ inputs.mode || 'daily' }}
+      cancel-in-progress: false
+
+    steps:
+      # ============================================================
+      # Free disk space
+      # ============================================================
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af || true
+          df -h
+
+      # ============================================================
+      # Checkout workflow repo
+      # ============================================================
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # Clone collector repo (for config/ and symbol lists)
+      # ============================================================
+      - name: Clone collector repo
+        run: |
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git \
+            collector
+
+      # ============================================================
+      # Login to ghcr.io and pull image
+      # ============================================================
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull Docker image
+        run: |
+          docker pull ghcr.io/sheng9571/k-line-collector/tv-collector:latest
+          docker tag  ghcr.io/sheng9571/k-line-collector/tv-collector:latest tv-collector:latest
+
+      # ============================================================
+      # Restore state cache
+      # ============================================================
+      - name: Restore state cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ./state
+          key: tv-fx-state-${{ github.run_id }}
+          restore-keys: |
+            tv-fx-state-
+
+      # ============================================================
+      # Start container
+      # ============================================================
+      - name: Start container
+        run: |
+          mkdir -p state output
+
+          docker run -d \
+            --name tv-collector \
+            -e NODE_ENV=production \
+            -e SKIP_HF_UPLOAD=${{ inputs.skip_hf_upload || 'true' }} \
+            -e HF_TOKEN=${{ secrets.HF_TOKEN }} \
+            -e HF_REPO=${{ secrets.HF_REPO_TV }} \
+            -e TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }} \
+            -e TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }} \
+            -e TV_SESSION=${{ secrets.TV_SESSION }} \
+            -e TV_SIGNATURE=${{ secrets.TV_SIGNATURE }} \
+            -e OUTPUT_DIR=/app/output \
+            -e STATE_DIR=/app/state \
+            -v ${{ github.workspace }}/collector/forex/symbols:/forex/symbols:ro \
+            -v ${{ github.workspace }}/collector/crypto/symbols:/crypto/symbols:ro \
+            -v ${{ github.workspace }}/collector/stock/symbols:/stock/symbols:ro \
+            -v ${{ github.workspace }}/output:/app/output \
+            -v ${{ github.workspace }}/state:/app/state \
+            tv-collector:latest \
+            tail -f /dev/null
+
+          echo "Container started"
+
+      # ============================================================
+      # Copy config from cloned repo into container
+      # ============================================================
+      - name: Copy config into container
+        run: |
+          CONFIG_FILE="${{ inputs.config_file || 'config/forex.yaml' }}"
+          CONFIG_SRC="./collector/tv/${CONFIG_FILE}"
+
+          if [ ! -f "${CONFIG_SRC}" ]; then
+            echo "ERROR: config file not found: ${CONFIG_SRC}"
+            exit 1
+          fi
+
+          # Ensure parent dir exists in container (handles nested paths)
+          docker exec tv-collector mkdir -p "/app/$(dirname "${CONFIG_FILE}")"
+
+          # Copy the chosen config file
+          docker cp "${CONFIG_SRC}" "tv-collector:/app/${CONFIG_FILE}"
+          echo "Config copied: ${CONFIG_FILE}"
+
+      # ============================================================
+      # Restore state into container
+      # ============================================================
+      - name: Restore state into container
+        run: |
+          if [ -d ./state ] && [ "$(ls -A ./state 2>/dev/null)" ]; then
+            docker cp ./state/. tv-collector:/app/state/
+            echo "State restored"
+          else
+            echo "No previous state to restore"
+          fi
+
+      # ============================================================
+      # Run collection
+      # ============================================================
+      - name: Collect TV FX K-lines
+        run: |
+          MODE="${{ inputs.mode || 'daily' }}"
+          CONFIG_FILE="${{ inputs.config_file || 'config/forex.yaml' }}"
+          TIMEFRAMES="${{ inputs.timeframes }}"
+
+          CMD="node src/main.js --mode ${MODE} --config ${CONFIG_FILE}"
+          if [ -n "${TIMEFRAMES}" ]; then
+            CMD="${CMD} --timeframes '${TIMEFRAMES}'"
+          fi
+
+          echo "Running: ${CMD}"
+
+          docker exec tv-collector bash -c "${CMD}" || true
+
+          # Copy results and state back to host
+          docker cp tv-collector:/app/output/. ./output/ 2>/dev/null || true
+          docker cp tv-collector:/app/state/.  ./state/  2>/dev/null || true
+
+          echo ""
+          echo "=== Collection Results ==="
+          if [ -f ./output/collection_results.json ]; then
+            cat ./output/collection_results.json
+          else
+            echo "No results file found"
+          fi
+        id: collect
+
+      # ============================================================
+      # Save state cache
+      # ============================================================
+      - name: Save state cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ./state
+          key: tv-fx-state-${{ github.run_id }}
+
+      - name: Clean old state caches
+        if: always()
+        run: |
+          PREFIX="tv-fx-state-"
+          CURRENT_KEY="tv-fx-state-${{ github.run_id }}"
+          gh cache list --key "$PREFIX" --json key --jq '.[].key' \
+            | grep -v "^${CURRENT_KEY}$" \
+            | xargs -r -I{} gh cache delete "{}" || true
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      # ============================================================
+      # Keep alive (optional debug)
+      # ============================================================
+      - name: Keep alive
+        if: ${{ inputs.keep_alive_minutes != '0' && inputs.keep_alive_minutes != '' }}
+        run: |
+          MINUTES=${{ inputs.keep_alive_minutes }}
+          echo "Keeping runner alive for ${MINUTES} minutes..."
+          docker logs tv-collector --tail 50 2>&1 || true
+          sleep $((MINUTES * 60))
+
+      # ============================================================
+      # Cleanup
+      # ============================================================
+      - name: Container logs
+        if: always()
+        run: |
+          docker logs tv-collector 2>&1 | tail -100 || true
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop tv-collector 2>/dev/null || true
+          docker rm   tv-collector 2>/dev/null || true
