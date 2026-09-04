@@ -192,14 +192,14 @@ Timeout: ${TIMEOUT}" \
           fi
 
       # ============================================================
-      # Final validation — exit 1 if any symbol failed
+      # Final validation - exit 1 if any symbol failed
       # ============================================================
       - name: Check symbol validation result
         if: always()
         run: |
           TV_JSON="reports/forex/symbols/tv.json"
           if [ ! -f "${TV_JSON}" ]; then
-            echo "::error::tv.json not found — symbol check did not produce output."
+            echo "::error::tv.json not found - symbol check did not produce output."
             exit 1
           fi
 
