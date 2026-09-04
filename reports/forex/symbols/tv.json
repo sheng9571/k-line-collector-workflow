@@ -1,10 +1,10 @@
 {
-  "generated_at": "2026-09-04T08:36:04.235Z",
+  "generated_at": "2026-09-04T08:40:49.429Z",
   "config_file": "config/forex.yaml",
   "summary": {
     "total": 213,
-    "found": 212,
-    "not_found": 1,
+    "found": 213,
+    "not_found": 0,
     "timeout": 0
   },
   "symbols": [
@@ -9365,9 +9365,74 @@
       }
     },
     {
-      "tv_symbol": "PEPPERSTONE:XAGCNH",
-      "status": "not_found",
-      "error": "(ser_1) Symbol error: invalid symbol"
+      "tv_symbol": "SAXO:XAGCNH",
+      "status": "found",
+      "info": {
+        "series_id": "ser_1",
+        "source2": {
+          "country": "DK",
+          "description": "Saxo",
+          "exchange-type": "exchange",
+          "id": "SAXO",
+          "name": "Saxo",
+          "url": "https://www.home.saxo/"
+        },
+        "currency_code": "CNH",
+        "source_id": "SAXO",
+        "subsession_id": "regular",
+        "provider_id": "saxobank",
+        "currency_id": "XTVCNH",
+        "pro_perm": "",
+        "measure": "price",
+        "allowed_adjustment": "none",
+        "short_description": "Silver/Offshore Chinese Renminbi",
+        "variable_tick_size": "",
+        "name": "XAGCNH",
+        "full_name": "SAXO:XAGCNH",
+        "pro_name": "SAXO:XAGCNH",
+        "base_name": [
+          "SAXO:XAGCNH"
+        ],
+        "description": "Silver/Offshore Chinese Renminbi",
+        "exchange": "Saxo",
+        "pricescale": 10000,
+        "pointvalue": 1,
+        "minmov": 1,
+        "session": "1700-1700",
+        "session_display": "1704-1659",
+        "subsessions": [
+          {
+            "description": "Regular Trading Hours",
+            "id": "regular",
+            "session": "1700-1700",
+            "session-display": "1704-1659"
+          }
+        ],
+        "type": "commodity",
+        "typespecs": [
+          "cfd"
+        ],
+        "has_intraday": true,
+        "fractional": false,
+        "listed_exchange": "SAXO",
+        "legs": [
+          "SAXO:XAGCNH"
+        ],
+        "is_tradable": true,
+        "minmove2": 1,
+        "timezone": "America/New_York",
+        "aliases": [],
+        "alternatives": [],
+        "is_replayable": true,
+        "has_adjustment": false,
+        "has_extended_hours": false,
+        "bar_source": "trade",
+        "bar_transform": "none",
+        "bar_fillgaps": false,
+        "visible_plots_set": "ohlc",
+        "is-tickbars-available": true,
+        "exchange_listed_name": "Saxo"
+      }
     },
     {
       "tv_symbol": "OANDA:XAGEUR",
