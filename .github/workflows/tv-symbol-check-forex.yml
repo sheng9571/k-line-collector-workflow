@@ -1,0 +1,228 @@
+name: TV Symbol Check — Forex
+
+# Validates all forex symbols in tv_fx.txt against TradingView.
+# Collects full chart.infos for each symbol and commits
+# reports/forex/symbols/tv.json via PR with auto-merge.
+#
+# Run result:
+#   ✅ green  — all symbols found
+#   ❌ red    — one or more symbols not_found or timeout
+#
+# The PR/commit always runs so results are preserved regardless of outcome.
+
+on:
+  schedule:
+    # Every Saturday at 07:00 UTC (15:00 UTC+8)
+    - cron: '0 7 * * 6'
+  workflow_dispatch:
+
+concurrency:
+  group: tv-symbol-check-forex
+  cancel-in-progress: false
+
+jobs:
+  check-symbols:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # ============================================================
+      # Free disk space
+      # ============================================================
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          docker system prune -af || true
+          df -h
+
+      # ============================================================
+      # Checkout workflow repo
+      # ============================================================
+      - name: Checkout workflow repo
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # Clone collector repo (for tv/config/ and forex/symbols/)
+      # ============================================================
+      - name: Clone collector repo
+        run: |
+          git clone --depth 1 \
+            https://x-access-token:${{ secrets.K_LINE_COLLECTOR_PAT }}@github.com/sheng9571/k-line-collector.git \
+            collector
+
+      # ============================================================
+      # Login to ghcr.io and pull image
+      # ============================================================
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull Docker image
+        run: |
+          docker pull ghcr.io/sheng9571/k-line-collector/tv-collector:latest
+          docker tag  ghcr.io/sheng9571/k-line-collector/tv-collector:latest tv-collector:latest
+
+      # ============================================================
+      # Start container
+      # ============================================================
+      - name: Start container
+        run: |
+          mkdir -p output
+
+          docker run -d \
+            --name tv-collector \
+            -e NODE_ENV=production \
+            -e SKIP_HF_UPLOAD=true \
+            -e TURSO_DATABASE_URL=${{ secrets.TURSO_DATABASE_URL }} \
+            -e TURSO_AUTH_TOKEN=${{ secrets.TURSO_AUTH_TOKEN }} \
+            -e TV_SESSION=${{ secrets.TV_SESSION }} \
+            -e TV_SIGNATURE=${{ secrets.TV_SIGNATURE }} \
+            -e OUTPUT_DIR=/app/output \
+            -v ${{ github.workspace }}/collector/forex/symbols:/forex/symbols:ro \
+            -v ${{ github.workspace }}/collector/crypto/symbols:/crypto/symbols:ro \
+            -v ${{ github.workspace }}/collector/stock/symbols:/stock/symbols:ro \
+            -v ${{ github.workspace }}/output:/app/output \
+            tv-collector:latest \
+            tail -f /dev/null
+
+          echo "Container started"
+
+      # ============================================================
+      # Copy config into container
+      # ============================================================
+      - name: Copy config into container
+        run: |
+          CONFIG_SRC="./collector/tv/config/forex.yaml"
+
+          if [ ! -f "${CONFIG_SRC}" ]; then
+            echo "ERROR: config file not found: ${CONFIG_SRC}"
+            exit 1
+          fi
+
+          docker exec tv-collector mkdir -p "/app/config"
+          docker cp "${CONFIG_SRC}" "tv-collector:/app/config/forex.yaml"
+          echo "Config copied: config/forex.yaml"
+
+      # ============================================================
+      # Run symbol check
+      # ============================================================
+      - name: Run symbol check
+        continue-on-error: true
+        run: |
+          echo "Running symbol-check for config/forex.yaml ..."
+          docker exec tv-collector sh -c "node src/main.js --mode symbol-check --config config/forex.yaml"
+
+      # ============================================================
+      # Copy results back to host
+      # ============================================================
+      - name: Copy results from container
+        if: always()
+        run: |
+          docker cp tv-collector:/app/output/. ./output/ 2>/dev/null || true
+          echo "Output files:"
+          ls -la ./output/ 2>/dev/null || echo "(none)"
+
+      # ============================================================
+      # Write tv.json and Job Summary
+      # ============================================================
+      - name: Write tv.json and Job Summary
+        if: always()
+        run: |
+          mkdir -p reports/forex/symbols
+          python3 scripts/generate_symbol_summary.py
+        env:
+          SYMBOL_CHECK_JSON: "./output/symbol_check.json"
+          TV_JSON_OUTPUT: "./reports/forex/symbols/tv.json"
+
+      # ============================================================
+      # Commit tv.json and open PR with auto-merge
+      # ============================================================
+      - name: Commit tv.json and open PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add reports/forex/symbols/tv.json
+
+          if git diff --staged --quiet; then
+            echo "No changes to tv.json, skipping PR"
+            exit 0
+          fi
+
+          DATE=$(date -u +%Y-%m-%d)
+          BRANCH="chore/tv-symbol-check-forex-${DATE}-${{ github.run_id }}"
+
+          git checkout -b "${BRANCH}"
+          git commit -m "chore(tv): update forex symbol info ${DATE}"
+
+          # Pull rebase to handle concurrent run conflicts
+          git pull --rebase origin main || true
+          git push -u origin "${BRANCH}"
+
+          NOT_FOUND=$(python3 -c "import json; d=json.load(open('reports/forex/symbols/tv.json')); print(d.get('summary',{}).get('not_found',0))" 2>/dev/null || echo "0")
+          TIMEOUT=$(python3 -c "import json; d=json.load(open('reports/forex/symbols/tv.json')); print(d.get('summary',{}).get('timeout',0))" 2>/dev/null || echo "0")
+          FOUND=$(python3 -c "import json; d=json.load(open('reports/forex/symbols/tv.json')); print(d.get('summary',{}).get('found',0))" 2>/dev/null || echo "0")
+
+          gh pr create \
+            --title "chore(tv): update forex symbol info ${DATE}" \
+            --body "Automated TV symbol check (run ${{ github.run_id }}).
+
+Config: config/forex.yaml
+Found: ${FOUND}
+Not found: ${NOT_FOUND}
+Timeout: ${TIMEOUT}" \
+            --base main \
+            --head "${BRANCH}"
+
+          PR_NUMBER=$(gh pr list --head "${BRANCH}" --json number --jq '.[0].number')
+          if [ -n "${PR_NUMBER}" ]; then
+            gh pr merge "${PR_NUMBER}" --auto --squash || \
+              echo "::warning::Auto-merge not available; please merge the PR manually."
+          fi
+
+      # ============================================================
+      # Final validation — exit 1 if any symbol failed
+      # ============================================================
+      - name: Check symbol validation result
+        if: always()
+        run: |
+          TV_JSON="reports/forex/symbols/tv.json"
+          if [ ! -f "${TV_JSON}" ]; then
+            echo "::error::tv.json not found — symbol check did not produce output."
+            exit 1
+          fi
+
+          NOT_FOUND=$(python3 -c "import json; d=json.load(open('${TV_JSON}')); print(d.get('summary',{}).get('not_found',0))")
+          TIMEOUT=$(python3 -c "import json; d=json.load(open('${TV_JSON}')); print(d.get('summary',{}).get('timeout',0))")
+
+          if [ "${NOT_FOUND}" -gt 0 ] || [ "${TIMEOUT}" -gt 0 ]; then
+            echo "::error::Symbol validation failed: not_found=${NOT_FOUND} timeout=${TIMEOUT}"
+            exit 1
+          fi
+
+          echo "All symbols validated successfully."
+
+      # ============================================================
+      # Cleanup
+      # ============================================================
+      - name: Container logs
+        if: always()
+        run: |
+          docker logs tv-collector 2>&1 | tail -100 || true
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop tv-collector 2>/dev/null || true
+          docker rm   tv-collector 2>/dev/null || true
