@@ -176,12 +176,7 @@ jobs:
 
           gh pr create \
             --title "chore(tv): update forex symbol info ${DATE}" \
-            --body "Automated TV symbol check (run ${{ github.run_id }}).
-
-Config: config/forex.yaml
-Found: ${FOUND}
-Not found: ${NOT_FOUND}
-Timeout: ${TIMEOUT}" \
+            --body "Automated TV symbol check (run ${{ github.run_id }}).\n\nConfig: config/forex.yaml\nFound: ${FOUND}\nNot found: ${NOT_FOUND}\nTimeout: ${TIMEOUT}" \
             --base main \
             --head "${BRANCH}"
 
