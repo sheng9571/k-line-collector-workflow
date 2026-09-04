@@ -174,16 +174,9 @@ jobs:
           TIMEOUT=$(python3 -c "import json; d=json.load(open('reports/forex/symbols/tv.json')); print(d.get('summary',{}).get('timeout',0))" 2>/dev/null || echo "0")
           FOUND=$(python3 -c "import json; d=json.load(open('reports/forex/symbols/tv.json')); print(d.get('summary',{}).get('found',0))" 2>/dev/null || echo "0")
 
-          PR_BODY="Automated TV symbol check (run ${{ github.run_id }}).
-
-Config: config/forex.yaml
-Found: ${FOUND}
-Not found: ${NOT_FOUND}
-Timeout: ${TIMEOUT}"
-
           gh pr create \
             --title "chore(tv): update forex symbol info ${DATE}" \
-            --body "${PR_BODY}" \
+            --body "Automated TV symbol check (run ${{ github.run_id }}). Config: config/forex.yaml | Found: ${FOUND} | Not found: ${NOT_FOUND} | Timeout: ${TIMEOUT}" \
             --base main \
             --head "${BRANCH}"
 
