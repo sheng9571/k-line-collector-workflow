@@ -86,9 +86,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ./state
-          key: tv-fx-state-${{ github.run_id }}
+          key: tv-fx-${{ inputs.mode || 'daily' }}-state-${{ github.run_id }}
           restore-keys: |
-            tv-fx-state-
+            tv-fx-${{ inputs.mode || 'daily' }}-state-
 
       # ============================================================
       # Start container
@@ -190,13 +190,13 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ./state
-          key: tv-fx-state-${{ github.run_id }}
+          key: tv-fx-${{ inputs.mode || 'daily' }}-state-${{ github.run_id }}
 
       - name: Clean old state caches
         if: always()
         run: |
-          PREFIX="tv-fx-state-"
-          CURRENT_KEY="tv-fx-state-${{ github.run_id }}"
+          PREFIX="tv-fx-${{ inputs.mode || 'daily' }}-state-"
+          CURRENT_KEY="tv-fx-${{ inputs.mode || 'daily' }}-state-${{ github.run_id }}"
           gh cache list --key "$PREFIX" --json key --jq '.[].key' \
             | grep -v "^${CURRENT_KEY}$" \
             | xargs -r -I{} gh cache delete "{}" || true
