@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-04T08:40:49.429Z",
+  "generated_at": "2026-09-05T11:15:34.739Z",
   "config_file": "config/forex.yaml",
   "summary": {
     "total": 213,
@@ -6581,7 +6581,7 @@
         ],
         "description": "Euro vs. Turkish Lira",
         "exchange": "FXCM",
-        "pricescale": 100000,
+        "pricescale": 10000,
         "pointvalue": 1,
         "minmov": 1,
         "session": "1700-1700",
@@ -13207,7 +13207,7 @@
         ],
         "description": "Dow Jones Industrial Average Cash",
         "exchange": "FXCM",
-        "pricescale": 10,
+        "pricescale": 100,
         "pointvalue": 1,
         "minmov": 1,
         "session": "1800-1700|1800-1645:6",
