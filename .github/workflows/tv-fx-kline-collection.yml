@@ -19,6 +19,10 @@ on:
         description: 'Comma-separated TV timeframes override (empty = use config)'
         required: false
         default: ''
+      symbols:
+        description: 'Comma-separated TV symbols override (empty = use config symbol list), e.g. FOREXCOM:USDTHB,SAXO:AUDDKK'
+        required: false
+        default: ''
       skip_hf_upload:
         description: 'Skip HuggingFace upload (collect only)'
         required: false
@@ -163,6 +167,10 @@ jobs:
           CMD="node src/main.js --mode ${MODE} --config ${CONFIG_FILE}"
           if [ -n "${TIMEFRAMES}" ]; then
             CMD="${CMD} --timeframes '${TIMEFRAMES}'"
+          fi
+          SYMBOLS="${{ inputs.symbols }}"
+          if [ -n "${SYMBOLS}" ]; then
+            CMD="${CMD} --symbols '${SYMBOLS}'"
           fi
 
           echo "Running: ${CMD}"
