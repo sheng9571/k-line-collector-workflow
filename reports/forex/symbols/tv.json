@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-05T11:15:34.739Z",
+  "generated_at": "2026-09-12T11:34:21.819Z",
   "config_file": "config/forex.yaml",
   "summary": {
     "total": 213,
@@ -2990,7 +2990,7 @@
         ],
         "description": "US Dollar vs. Swedish Krona",
         "exchange": "FXCM",
-        "pricescale": 100000,
+        "pricescale": 10000,
         "pointvalue": 1,
         "minmov": 1,
         "session": "1700-1700",
@@ -6218,7 +6218,7 @@
         ],
         "description": "Euro vs. Swedish Krona",
         "exchange": "FXCM",
-        "pricescale": 100000,
+        "pricescale": 10000,
         "pointvalue": 1,
         "minmov": 1,
         "session": "1700-1700",
@@ -6581,7 +6581,7 @@
         ],
         "description": "Euro vs. Turkish Lira",
         "exchange": "FXCM",
-        "pricescale": 10000,
+        "pricescale": 100000,
         "pointvalue": 1,
         "minmov": 1,
         "session": "1700-1700",
