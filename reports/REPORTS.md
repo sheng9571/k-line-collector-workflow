@@ -1,7 +1,7 @@
 # K-line Audit Reports
 
-Last updated: 2026-09-27T11:18:19Z
+Last updated: 2026-10-04T11:44:35Z
 
 | Market | Source | Symbols | Coverage | Issues | Storage | Details |
 |--------|--------|---------|----------|--------|---------|---------|
-| Crypto | Binance | 28 | 97.23% | 337 | 2.92 GB | [→](crypto/REPORTS.md) |
+| Crypto | Binance | 28 | 97.02% | 337 | 2.92 GB | [→](crypto/REPORTS.md) |
