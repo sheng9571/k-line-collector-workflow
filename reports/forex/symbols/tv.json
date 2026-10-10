@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-03T12:28:06.374Z",
+  "generated_at": "2026-10-10T13:31:47.111Z",
   "config_file": "config/forex.yaml",
   "summary": {
     "total": 213,
@@ -14037,16 +14037,16 @@
         "series_id": "ser_1",
         "source2": {
           "country": "AU",
-          "description": "IC Markets",
+          "description": "IC",
           "exchange-type": "exchange",
-          "id": "ICMARKETS",
-          "name": "IC Markets",
+          "id": "IC",
+          "name": "IC",
           "url": "https://www.icmarkets.eu/en/"
         },
         "currency_code": "NOK",
-        "source_id": "ICMARKETS",
+        "source_id": "IC",
         "subsession_id": "regular",
-        "provider_id": "icmarkets",
+        "provider_id": "ic",
         "currency_id": "NOK",
         "pro_perm": "",
         "volume_type": "tick",
@@ -14055,13 +14055,13 @@
         "short_description": "Norway 25 Index",
         "variable_tick_size": "",
         "name": "NOR25",
-        "full_name": "ICMARKETS:NOR25",
-        "pro_name": "ICMARKETS:NOR25",
+        "full_name": "IC:NOR25",
+        "pro_name": "IC:NOR25",
         "base_name": [
-          "ICMARKETS:NOR25"
+          "IC:NOR25"
         ],
         "description": "Norway 25 Index",
-        "exchange": "IC Markets",
+        "exchange": "IC",
         "pricescale": 100,
         "pointvalue": 1,
         "minmov": 1,
@@ -14094,14 +14094,16 @@
         ],
         "has_intraday": true,
         "fractional": false,
-        "listed_exchange": "ICMARKETS",
+        "listed_exchange": "IC",
         "legs": [
-          "ICMARKETS:NOR25"
+          "IC:NOR25"
         ],
         "is_tradable": true,
         "minmove2": 0,
         "timezone": "Europe/Berlin",
-        "aliases": [],
+        "aliases": [
+          "ICMARKETS:NOR25"
+        ],
         "alternatives": [],
         "is_replayable": true,
         "has_adjustment": false,
@@ -14111,7 +14113,7 @@
         "bar_fillgaps": false,
         "visible_plots_set": "ohlcv",
         "is-tickbars-available": true,
-        "exchange_listed_name": "IC Markets"
+        "exchange_listed_name": "IC"
       }
     },
     {
@@ -14121,16 +14123,16 @@
         "series_id": "ser_1",
         "source2": {
           "country": "AU",
-          "description": "IC Markets",
+          "description": "IC",
           "exchange-type": "exchange",
-          "id": "ICMARKETS",
-          "name": "IC Markets",
+          "id": "IC",
+          "name": "IC",
           "url": "https://www.icmarkets.eu/en/"
         },
         "currency_code": "SEK",
-        "source_id": "ICMARKETS",
+        "source_id": "IC",
         "subsession_id": "regular",
-        "provider_id": "icmarkets",
+        "provider_id": "ic",
         "currency_id": "SEK",
         "pro_perm": "",
         "volume_type": "tick",
@@ -14139,13 +14141,13 @@
         "short_description": "Sweden 30 Index",
         "variable_tick_size": "",
         "name": "SE30",
-        "full_name": "ICMARKETS:SE30",
-        "pro_name": "ICMARKETS:SE30",
+        "full_name": "IC:SE30",
+        "pro_name": "IC:SE30",
         "base_name": [
-          "ICMARKETS:SE30"
+          "IC:SE30"
         ],
         "description": "Sweden 30 Index",
-        "exchange": "IC Markets",
+        "exchange": "IC",
         "pricescale": 100,
         "pointvalue": 1,
         "minmov": 1,
@@ -14178,14 +14180,16 @@
         ],
         "has_intraday": true,
         "fractional": false,
-        "listed_exchange": "ICMARKETS",
+        "listed_exchange": "IC",
         "legs": [
-          "ICMARKETS:SE30"
+          "IC:SE30"
         ],
         "is_tradable": true,
         "minmove2": 0,
         "timezone": "America/Chicago",
-        "aliases": [],
+        "aliases": [
+          "ICMARKETS:SE30"
+        ],
         "alternatives": [],
         "is_replayable": true,
         "has_adjustment": false,
@@ -14195,7 +14199,7 @@
         "bar_fillgaps": false,
         "visible_plots_set": "ohlcv",
         "is-tickbars-available": true,
-        "exchange_listed_name": "IC Markets"
+        "exchange_listed_name": "IC"
       }
     },
     {
@@ -14995,16 +14999,16 @@
         "series_id": "ser_1",
         "source2": {
           "country": "AU",
-          "description": "IC Markets",
+          "description": "IC",
           "exchange-type": "exchange",
-          "id": "ICMARKETS",
-          "name": "IC Markets",
+          "id": "IC",
+          "name": "IC",
           "url": "https://www.icmarkets.eu/en/"
         },
         "currency_code": "ZAR",
-        "source_id": "ICMARKETS",
+        "source_id": "IC",
         "subsession_id": "regular",
-        "provider_id": "icmarkets",
+        "provider_id": "ic",
         "currency_id": "ZAR",
         "pro_perm": "",
         "volume_type": "tick",
@@ -15013,13 +15017,13 @@
         "short_description": "South Africa 40 Index",
         "variable_tick_size": "",
         "name": "SA40",
-        "full_name": "ICMARKETS:SA40",
-        "pro_name": "ICMARKETS:SA40",
+        "full_name": "IC:SA40",
+        "pro_name": "IC:SA40",
         "base_name": [
-          "ICMARKETS:SA40"
+          "IC:SA40"
         ],
         "description": "South Africa 40 Index",
-        "exchange": "IC Markets",
+        "exchange": "IC",
         "pricescale": 100,
         "pointvalue": 1,
         "minmov": 1,
@@ -15052,14 +15056,16 @@
         ],
         "has_intraday": true,
         "fractional": false,
-        "listed_exchange": "ICMARKETS",
+        "listed_exchange": "IC",
         "legs": [
-          "ICMARKETS:SA40"
+          "IC:SA40"
         ],
         "is_tradable": true,
         "minmove2": 0,
         "timezone": "Etc/UTC",
-        "aliases": [],
+        "aliases": [
+          "ICMARKETS:SA40"
+        ],
         "alternatives": [],
         "is_replayable": true,
         "has_adjustment": false,
@@ -15069,7 +15075,7 @@
         "bar_fillgaps": false,
         "visible_plots_set": "ohlcv",
         "is-tickbars-available": true,
-        "exchange_listed_name": "IC Markets"
+        "exchange_listed_name": "IC"
       }
     },
     {
