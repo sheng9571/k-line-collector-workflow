@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-17T11:33:19.695Z",
+  "generated_at": "2026-10-24T11:57:09.712Z",
   "config_file": "config/forex.yaml",
   "summary": {
     "total": 213,
@@ -12856,14 +12856,14 @@
         "pricescale": 1000,
         "pointvalue": 1,
         "minmov": 1,
-        "session": "1900-0730:2345|1900-1300:6",
-        "session_display": "1900-0730:2345|1900-1300:6",
+        "session": "1900-1320",
+        "session_display": "1900-1320",
         "subsessions": [
           {
             "description": "Regular Trading Hours",
             "id": "regular",
-            "session": "1900-0730:2345|1900-1300:6",
-            "session-display": "1900-0730:2345|1900-1300:6"
+            "session": "1900-1320",
+            "session-display": "1900-1320"
           }
         ],
         "type": "commodity",
